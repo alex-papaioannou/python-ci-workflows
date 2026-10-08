@@ -23,8 +23,10 @@ jobs:
       - name: Run tests and reject empty test suites
         shell: python
         run: |
+          import os
           import sys
           import unittest
+          sys.path.insert(0, os.getcwd())
           suite = unittest.defaultTestLoader.discover('tests')
           if suite.countTestCases() == 0:
               raise SystemExit('No tests discovered')
