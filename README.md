@@ -28,5 +28,3 @@ execution remains necessary to validate permissions and integration.
 
 Suggested next contributions: dependency installation with explicit lockfiles,
 optional Ruff checks, and optional package-build validation.
-
-Initial implementation prepared with AI assistance.
