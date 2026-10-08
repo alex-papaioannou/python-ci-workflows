@@ -1,0 +1,32 @@
+name: Reusable Python CI
+on:
+  workflow_call:
+permissions:
+  contents: read
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ['3.11', '3.12', '3.13']
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v6
+        with:
+          python-version: ${{ matrix.python-version }}
+      - name: Check Python syntax
+        run: python -m compileall -q .
+      - name: Run tests and reject empty test suites
+        shell: python
+        run: |
+          import sys
+          import unittest
+          suite = unittest.defaultTestLoader.discover('tests')
+          if suite.countTestCases() == 0:
+              raise SystemExit('No tests discovered')
+          result = unittest.TextTestRunner(verbosity=2).run(suite)
+          sys.exit(0 if result.wasSuccessful() else 1)

@@ -1,0 +1,11 @@
+name: Workflow smoke test
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  smoke:
+    uses: ./.github/workflows/python-ci.yml
