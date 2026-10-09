@@ -56,3 +56,7 @@ class WorkflowTests(unittest.TestCase):
     def test_syntax_error_rejected(self):
         result = self.execute({'bad.py': 'def broken('}, step='Check Python syntax')
         self.assertNotEqual(result.returncode, 0)
+
+    def test_custom_test_directory(self):
+        result = self.execute({'checks/test_ok.py': 'import unittest\nclass T(unittest.TestCase):\n def test_ok(self): pass'}, {'TEST_DIRECTORY': 'checks'})
+        self.assertEqual(result.returncode, 0, result.stderr)
