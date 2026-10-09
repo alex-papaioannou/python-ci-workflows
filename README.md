@@ -58,3 +58,5 @@ Set `top-level-directory` for package-based discovery. Discovered directories mu
 An early validation step rejects nonexistent/out-of-checkout paths, invalid JSON target lists, verbosity values, filename globs, and exclusion regexes. GitHub validates matrix and job-level settings before steps can run.
 
 Set `warnings-as-errors: true` to set `PYTHONWARNINGS=error` for job steps. This can reveal deprecations in dependencies as well as project code.
+
+`hash-seed` defaults to `"0"` for reproducible ordering. Use `"random"` to exercise randomized hashing, or a decimal integer from 0 through 4294967295. Python rejects invalid seeds before executing code.
