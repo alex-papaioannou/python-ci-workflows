@@ -6,6 +6,10 @@ on:
         description: "JSON array of Python versions"
         type: string
         default: "[\"3.11\", \"3.12\", \"3.13\"]"
+      test-directory:
+        description: "Unittest discovery directory"
+        type: string
+        default: "tests"
 permissions:
   contents: read
 jobs:
@@ -25,17 +29,21 @@ jobs:
           python-version: ${{ matrix.python-version }}
       - name: Check Python syntax
         shell: python
+        env:
+          TEST_DIRECTORY: ${{ inputs.test-directory }}
         run: |
           import compileall
           raise SystemExit(0 if compileall.compile_dir(".", quiet=1) else 1)
       - name: Run tests and reject empty test suites
         shell: python
+        env:
+          TEST_DIRECTORY: ${{ inputs.test-directory }}
         run: |
           import os
           import sys
           import unittest
           sys.path.insert(0, os.getcwd())
-          suite = unittest.defaultTestLoader.discover('tests')
+          suite = unittest.defaultTestLoader.discover(os.environ.get('TEST_DIRECTORY', 'tests'))
           if suite.countTestCases() == 0:
               raise SystemExit('No tests discovered')
           result = unittest.TextTestRunner(verbosity=2).run(suite)
