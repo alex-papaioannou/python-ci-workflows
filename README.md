@@ -46,3 +46,5 @@ Set `top-level-directory` for package-based discovery. Discovered directories mu
 `test-verbosity` accepts 0, 1, or 2; the default remains verbose output (2).
 
 `test-fail-fast: true` stops unittest after its first failure. Matrix fail-fast remains disabled so other Python versions finish.
+
+`timeout-minutes` defaults to 10. Use a positive whole number within GitHub's hosted runner limit (360).
