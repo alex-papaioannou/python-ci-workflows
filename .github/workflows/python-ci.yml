@@ -42,6 +42,10 @@ on:
         description: "JSON array of files or directories to syntax-check"
         type: string
         default: "[\".\"]"
+      compile-exclude:
+        description: "Regex of paths to exclude from compilation"
+        type: string
+        default: ""
 permissions:
   contents: read
 jobs:
@@ -72,18 +76,21 @@ jobs:
           TEST_VERBOSITY: ${{ inputs.test-verbosity }}
           TEST_FAIL_FAST: ${{ inputs.test-fail-fast }}
           COMPILE_PATHS: ${{ inputs.compile-paths }}
+          COMPILE_EXCLUDE: ${{ inputs.compile-exclude }}
         run: |
           import compileall
           import json
           import os
+          import re
           from pathlib import Path
           paths = json.loads(os.environ.get('COMPILE_PATHS', '["."]'))
+          exclude = re.compile(os.environ["COMPILE_EXCLUDE"]) if os.environ.get("COMPILE_EXCLUDE") else None
           ok = True
           for path in paths:
               if not Path(path).exists():
                   raise SystemExit(f'Compilation target does not exist: {path}')
               check = compileall.compile_dir if Path(path).is_dir() else compileall.compile_file
-              ok = check(path, quiet=1) and ok
+              ok = check(path, quiet=1, rx=exclude) and ok
           raise SystemExit(0 if ok else 1)
       - name: Run tests and reject empty test suites
         shell: python
@@ -94,6 +101,7 @@ jobs:
           TEST_VERBOSITY: ${{ inputs.test-verbosity }}
           TEST_FAIL_FAST: ${{ inputs.test-fail-fast }}
           COMPILE_PATHS: ${{ inputs.compile-paths }}
+          COMPILE_EXCLUDE: ${{ inputs.compile-exclude }}
         run: |
           import os
           import sys

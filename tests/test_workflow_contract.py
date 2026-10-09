@@ -82,3 +82,7 @@ class WorkflowTests(unittest.TestCase):
     def test_compilation_targets_exclude_unselected_files(self):
         result = self.execute({'good.py': 'x=1', 'bad.py': 'def broken('}, {'COMPILE_PATHS': '["good.py"]'}, step='Check Python syntax')
         self.assertEqual(result.returncode, 0, result.stderr)
+
+    def test_compilation_exclusion(self):
+        result = self.execute({'good.py': 'x=1', 'generated/bad.py': 'def broken('}, {'COMPILE_EXCLUDE': 'generated'}, step='Check Python syntax')
+        self.assertEqual(result.returncode, 0, result.stderr)

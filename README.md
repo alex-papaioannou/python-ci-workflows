@@ -52,3 +52,5 @@ Set `top-level-directory` for package-based discovery. Discovered directories mu
 `max-parallel` defaults to 3. Set a positive whole number to bound concurrent matrix jobs; this does not cancel older workflow runs.
 
 `compile-paths` is a JSON array, default `["."]`. Missing targets fail; select source paths to avoid generated or vendored code.
+
+`compile-exclude` is an optional Python regular expression matched against paths by compileall; it does not affect test discovery.
