@@ -50,6 +50,10 @@ on:
         description: "Treat Python warnings as errors"
         type: boolean
         default: false
+      hash-seed:
+        description: "Python hash seed: random or integer 0 through 4294967295"
+        type: string
+        default: "0"
 permissions:
   contents: read
 jobs:
@@ -61,6 +65,7 @@ jobs:
         working-directory: ${{ inputs.working-directory }}
     env:
       PYTHONWARNINGS: ${{ inputs.warnings-as-errors && 'error' || 'default' }}
+      PYTHONHASHSEED: ${{ inputs.hash-seed }}
     strategy:
       fail-fast: false
       max-parallel: ${{ inputs.max-parallel }}
