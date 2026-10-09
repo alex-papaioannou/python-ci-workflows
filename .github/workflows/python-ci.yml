@@ -18,6 +18,10 @@ on:
         description: "Project directory inside the checkout"
         type: string
         default: "."
+      top-level-directory:
+        description: "Optional unittest import root"
+        type: string
+        default: ""
 permissions:
   contents: read
 jobs:
@@ -43,6 +47,7 @@ jobs:
         env:
           TEST_DIRECTORY: ${{ inputs.test-directory }}
           TEST_PATTERN: ${{ inputs.test-pattern }}
+          TOP_LEVEL_DIRECTORY: ${{ inputs.top-level-directory }}
         run: |
           import compileall
           raise SystemExit(0 if compileall.compile_dir(".", quiet=1) else 1)
@@ -51,12 +56,13 @@ jobs:
         env:
           TEST_DIRECTORY: ${{ inputs.test-directory }}
           TEST_PATTERN: ${{ inputs.test-pattern }}
+          TOP_LEVEL_DIRECTORY: ${{ inputs.top-level-directory }}
         run: |
           import os
           import sys
           import unittest
           sys.path.insert(0, os.getcwd())
-          suite = unittest.defaultTestLoader.discover(os.environ.get('TEST_DIRECTORY', 'tests'), pattern=os.environ.get('TEST_PATTERN', 'test*.py'))
+          suite = unittest.defaultTestLoader.discover(os.environ.get('TEST_DIRECTORY', 'tests'), pattern=os.environ.get('TEST_PATTERN', 'test*.py'), top_level_dir=os.environ.get('TOP_LEVEL_DIRECTORY') or None)
           if suite.countTestCases() == 0:
               raise SystemExit('No tests discovered')
           result = unittest.TextTestRunner(verbosity=2).run(suite)
