@@ -60,3 +60,7 @@ class WorkflowTests(unittest.TestCase):
     def test_custom_test_directory(self):
         result = self.execute({'checks/test_ok.py': 'import unittest\nclass T(unittest.TestCase):\n def test_ok(self): pass'}, {'TEST_DIRECTORY': 'checks'})
         self.assertEqual(result.returncode, 0, result.stderr)
+
+    def test_custom_pattern_excludes_other_tests(self):
+        result = self.execute({'tests/check_ok.py': 'import unittest\nclass T(unittest.TestCase):\n def test_ok(self): pass', 'tests/test_bad.py': 'raise RuntimeError()'}, {'TEST_PATTERN': 'check_*.py'})
+        self.assertEqual(result.returncode, 0, result.stderr)
