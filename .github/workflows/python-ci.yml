@@ -19,7 +19,10 @@ jobs:
         with:
           python-version: ${{ matrix.python-version }}
       - name: Check Python syntax
-        run: python -m compileall -q .
+        shell: python
+        run: |
+          import compileall
+          raise SystemExit(0 if compileall.compile_dir(".", quiet=1) else 1)
       - name: Run tests and reject empty test suites
         shell: python
         run: |

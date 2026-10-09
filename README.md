@@ -28,3 +28,7 @@ execution remains necessary to validate permissions and integration.
 
 Suggested next contributions: dependency installation with explicit lockfiles,
 optional Ruff checks, and optional package-build validation.
+
+## Workflow behavior tests
+
+The test suite executes the embedded runner in temporary consumer projects. It checks successful root imports, failing tests, import failures, empty discovery, and compilation errors.
