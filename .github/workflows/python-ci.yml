@@ -30,12 +30,16 @@ on:
         description: "Stop unittest after the first failure"
         type: boolean
         default: false
+      timeout-minutes:
+        description: "Per-job timeout in minutes"
+        type: number
+        default: 10
 permissions:
   contents: read
 jobs:
   test:
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: ${{ inputs.timeout-minutes }}
     defaults:
       run:
         working-directory: ${{ inputs.working-directory }}
