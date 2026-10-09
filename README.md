@@ -40,3 +40,5 @@ Set `python-versions: '["3.11", "3.13"]'` under the reusable job's `with:`. Supp
 `test-pattern` defaults to `test*.py`. A custom pattern that discovers zero tests still fails the job.
 
 `working-directory` defaults to `.`. Use a repository-relative directory for monorepo projects; compilation, installation, and tests run there.
+
+Set `top-level-directory` for package-based discovery. Discovered directories must be importable according to unittest's package rules; the default leaves discovery to infer its root.
