@@ -42,3 +42,5 @@ Set `python-versions: '["3.11", "3.13"]'` under the reusable job's `with:`. Supp
 `working-directory` defaults to `.`. Use a repository-relative directory for monorepo projects; compilation, installation, and tests run there.
 
 Set `top-level-directory` for package-based discovery. Discovered directories must be importable according to unittest's package rules; the default leaves discovery to infer its root.
+
+`test-verbosity` accepts 0, 1, or 2; the default remains verbose output (2).

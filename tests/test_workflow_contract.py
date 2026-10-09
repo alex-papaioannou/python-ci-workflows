@@ -68,3 +68,8 @@ class WorkflowTests(unittest.TestCase):
     def test_explicit_top_level_directory(self):
         result = self.execute({'pkg/__init__.py': '', 'pkg/tests/__init__.py': '', 'pkg/tests/test_ok.py': 'import unittest\nclass T(unittest.TestCase):\n def test_ok(self): pass'}, {'TEST_DIRECTORY': 'pkg/tests', 'TOP_LEVEL_DIRECTORY': '.'})
         self.assertEqual(result.returncode, 0, result.stderr)
+
+    def test_quiet_verbosity(self):
+        result = self.execute({'tests/test_ok.py': 'import unittest\nclass T(unittest.TestCase):\n def test_unique_method(self): pass'}, {'TEST_VERBOSITY': '0'})
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertNotIn('test_unique_method', result.stderr)
