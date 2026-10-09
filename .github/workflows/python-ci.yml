@@ -10,6 +10,10 @@ on:
         description: "Unittest discovery directory"
         type: string
         default: "tests"
+      test-pattern:
+        description: "Unittest filename glob"
+        type: string
+        default: "test*.py"
 permissions:
   contents: read
 jobs:
@@ -31,6 +35,7 @@ jobs:
         shell: python
         env:
           TEST_DIRECTORY: ${{ inputs.test-directory }}
+          TEST_PATTERN: ${{ inputs.test-pattern }}
         run: |
           import compileall
           raise SystemExit(0 if compileall.compile_dir(".", quiet=1) else 1)
@@ -38,12 +43,13 @@ jobs:
         shell: python
         env:
           TEST_DIRECTORY: ${{ inputs.test-directory }}
+          TEST_PATTERN: ${{ inputs.test-pattern }}
         run: |
           import os
           import sys
           import unittest
           sys.path.insert(0, os.getcwd())
-          suite = unittest.defaultTestLoader.discover(os.environ.get('TEST_DIRECTORY', 'tests'))
+          suite = unittest.defaultTestLoader.discover(os.environ.get('TEST_DIRECTORY', 'tests'), pattern=os.environ.get('TEST_PATTERN', 'test*.py'))
           if suite.countTestCases() == 0:
               raise SystemExit('No tests discovered')
           result = unittest.TextTestRunner(verbosity=2).run(suite)
