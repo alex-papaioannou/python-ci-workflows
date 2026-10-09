@@ -48,3 +48,5 @@ Set `top-level-directory` for package-based discovery. Discovered directories mu
 `test-fail-fast: true` stops unittest after its first failure. Matrix fail-fast remains disabled so other Python versions finish.
 
 `timeout-minutes` defaults to 10. Use a positive whole number within GitHub's hosted runner limit (360).
+
+`max-parallel` defaults to 3. Set a positive whole number to bound concurrent matrix jobs; this does not cancel older workflow runs.

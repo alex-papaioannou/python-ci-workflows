@@ -34,6 +34,10 @@ on:
         description: "Per-job timeout in minutes"
         type: number
         default: 10
+      max-parallel:
+        description: "Maximum simultaneous matrix jobs"
+        type: number
+        default: 3
 permissions:
   contents: read
 jobs:
@@ -45,6 +49,7 @@ jobs:
         working-directory: ${{ inputs.working-directory }}
     strategy:
       fail-fast: false
+      max-parallel: ${{ inputs.max-parallel }}
       matrix:
         python-version: ${{ fromJSON(inputs.python-versions) }}
     steps:
