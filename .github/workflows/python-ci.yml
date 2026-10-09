@@ -46,6 +46,10 @@ on:
         description: "Regex of paths to exclude from compilation"
         type: string
         default: ""
+      warnings-as-errors:
+        description: "Treat Python warnings as errors"
+        type: boolean
+        default: false
 permissions:
   contents: read
 jobs:
@@ -55,6 +59,8 @@ jobs:
     defaults:
       run:
         working-directory: ${{ inputs.working-directory }}
+    env:
+      PYTHONWARNINGS: ${{ inputs.warnings-as-errors && 'error' || 'default' }}
     strategy:
       fail-fast: false
       max-parallel: ${{ inputs.max-parallel }}
