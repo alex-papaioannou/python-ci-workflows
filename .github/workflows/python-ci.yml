@@ -14,12 +14,19 @@ on:
         description: "Unittest filename glob"
         type: string
         default: "test*.py"
+      working-directory:
+        description: "Project directory inside the checkout"
+        type: string
+        default: "."
 permissions:
   contents: read
 jobs:
   test:
     runs-on: ubuntu-latest
     timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: ${{ inputs.working-directory }}
     strategy:
       fail-fast: false
       matrix:
