@@ -44,3 +44,5 @@ Set `python-versions: '["3.11", "3.13"]'` under the reusable job's `with:`. Supp
 Set `top-level-directory` for package-based discovery. Discovered directories must be importable according to unittest's package rules; the default leaves discovery to infer its root.
 
 `test-verbosity` accepts 0, 1, or 2; the default remains verbose output (2).
+
+`test-fail-fast: true` stops unittest after its first failure. Matrix fail-fast remains disabled so other Python versions finish.

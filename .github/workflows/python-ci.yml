@@ -26,6 +26,10 @@ on:
         description: "Unittest output verbosity: 0, 1, or 2"
         type: number
         default: 2
+      test-fail-fast:
+        description: "Stop unittest after the first failure"
+        type: boolean
+        default: false
 permissions:
   contents: read
 jobs:
@@ -53,6 +57,7 @@ jobs:
           TEST_PATTERN: ${{ inputs.test-pattern }}
           TOP_LEVEL_DIRECTORY: ${{ inputs.top-level-directory }}
           TEST_VERBOSITY: ${{ inputs.test-verbosity }}
+          TEST_FAIL_FAST: ${{ inputs.test-fail-fast }}
         run: |
           import compileall
           raise SystemExit(0 if compileall.compile_dir(".", quiet=1) else 1)
@@ -63,6 +68,7 @@ jobs:
           TEST_PATTERN: ${{ inputs.test-pattern }}
           TOP_LEVEL_DIRECTORY: ${{ inputs.top-level-directory }}
           TEST_VERBOSITY: ${{ inputs.test-verbosity }}
+          TEST_FAIL_FAST: ${{ inputs.test-fail-fast }}
         run: |
           import os
           import sys
@@ -71,5 +77,5 @@ jobs:
           suite = unittest.defaultTestLoader.discover(os.environ.get('TEST_DIRECTORY', 'tests'), pattern=os.environ.get('TEST_PATTERN', 'test*.py'), top_level_dir=os.environ.get('TOP_LEVEL_DIRECTORY') or None)
           if suite.countTestCases() == 0:
               raise SystemExit('No tests discovered')
-          result = unittest.TextTestRunner(verbosity=int(os.environ.get("TEST_VERBOSITY", "2"))).run(suite)
+          result = unittest.TextTestRunner(verbosity=int(os.environ.get("TEST_VERBOSITY", "2")), failfast=os.environ.get("TEST_FAIL_FAST", "false").lower() == "true").run(suite)
           sys.exit(0 if result.wasSuccessful() else 1)

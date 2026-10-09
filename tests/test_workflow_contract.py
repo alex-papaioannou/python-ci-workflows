@@ -73,3 +73,8 @@ class WorkflowTests(unittest.TestCase):
         result = self.execute({'tests/test_ok.py': 'import unittest\nclass T(unittest.TestCase):\n def test_unique_method(self): pass'}, {'TEST_VERBOSITY': '0'})
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertNotIn('test_unique_method', result.stderr)
+
+    def test_fail_fast_stops_after_first_failure(self):
+        result = self.execute({'tests/test_bad.py': 'import unittest\nclass T(unittest.TestCase):\n def test_a(self): self.fail()\n def test_b(self): self.fail()'}, {'TEST_FAIL_FAST': 'true'})
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn('Ran 1 test', result.stderr)
