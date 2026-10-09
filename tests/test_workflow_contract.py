@@ -78,3 +78,7 @@ class WorkflowTests(unittest.TestCase):
         result = self.execute({'tests/test_bad.py': 'import unittest\nclass T(unittest.TestCase):\n def test_a(self): self.fail()\n def test_b(self): self.fail()'}, {'TEST_FAIL_FAST': 'true'})
         self.assertNotEqual(result.returncode, 0)
         self.assertIn('Ran 1 test', result.stderr)
+
+    def test_compilation_targets_exclude_unselected_files(self):
+        result = self.execute({'good.py': 'x=1', 'bad.py': 'def broken('}, {'COMPILE_PATHS': '["good.py"]'}, step='Check Python syntax')
+        self.assertEqual(result.returncode, 0, result.stderr)

@@ -38,6 +38,10 @@ on:
         description: "Maximum simultaneous matrix jobs"
         type: number
         default: 3
+      compile-paths:
+        description: "JSON array of files or directories to syntax-check"
+        type: string
+        default: "[\".\"]"
 permissions:
   contents: read
 jobs:
@@ -67,9 +71,20 @@ jobs:
           TOP_LEVEL_DIRECTORY: ${{ inputs.top-level-directory }}
           TEST_VERBOSITY: ${{ inputs.test-verbosity }}
           TEST_FAIL_FAST: ${{ inputs.test-fail-fast }}
+          COMPILE_PATHS: ${{ inputs.compile-paths }}
         run: |
           import compileall
-          raise SystemExit(0 if compileall.compile_dir(".", quiet=1) else 1)
+          import json
+          import os
+          from pathlib import Path
+          paths = json.loads(os.environ.get('COMPILE_PATHS', '["."]'))
+          ok = True
+          for path in paths:
+              if not Path(path).exists():
+                  raise SystemExit(f'Compilation target does not exist: {path}')
+              check = compileall.compile_dir if Path(path).is_dir() else compileall.compile_file
+              ok = check(path, quiet=1) and ok
+          raise SystemExit(0 if ok else 1)
       - name: Run tests and reject empty test suites
         shell: python
         env:
@@ -78,6 +93,7 @@ jobs:
           TOP_LEVEL_DIRECTORY: ${{ inputs.top-level-directory }}
           TEST_VERBOSITY: ${{ inputs.test-verbosity }}
           TEST_FAIL_FAST: ${{ inputs.test-fail-fast }}
+          COMPILE_PATHS: ${{ inputs.compile-paths }}
         run: |
           import os
           import sys
