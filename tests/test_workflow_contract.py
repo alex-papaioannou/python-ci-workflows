@@ -91,3 +91,8 @@ class WorkflowTests(unittest.TestCase):
         for env in ({'COMPILE_PATHS': '[]'}, {'COMPILE_PATHS': '"."'}, {'COMPILE_PATHS': '["../"]'}, {'TEST_VERBOSITY': '9'}, {'COMPILE_EXCLUDE': '['}):
             result = self.execute({'tests/test_ok.py': ''}, env, step='Validate inputs')
             self.assertNotEqual(result.returncode, 0, env)
+
+    def test_warnings_can_fail_tests(self):
+        result = self.execute({'tests/test_warn.py': 'import unittest, warnings\nclass T(unittest.TestCase):\n def test_warn(self): warnings.warn("deprecated")'}, {'PYTHONWARNINGS': 'error'})
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn('deprecated', result.stderr)

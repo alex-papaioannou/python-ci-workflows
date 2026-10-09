@@ -56,3 +56,5 @@ Set `top-level-directory` for package-based discovery. Discovered directories mu
 `compile-exclude` is an optional Python regular expression matched against paths by compileall; it does not affect test discovery.
 
 An early validation step rejects nonexistent/out-of-checkout paths, invalid JSON target lists, verbosity values, filename globs, and exclusion regexes. GitHub validates matrix and job-level settings before steps can run.
+
+Set `warnings-as-errors: true` to set `PYTHONWARNINGS=error` for job steps. This can reveal deprecations in dependencies as well as project code.
