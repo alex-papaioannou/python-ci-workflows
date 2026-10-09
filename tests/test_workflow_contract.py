@@ -86,3 +86,8 @@ class WorkflowTests(unittest.TestCase):
     def test_compilation_exclusion(self):
         result = self.execute({'good.py': 'x=1', 'generated/bad.py': 'def broken('}, {'COMPILE_EXCLUDE': 'generated'}, step='Check Python syntax')
         self.assertEqual(result.returncode, 0, result.stderr)
+
+    def test_invalid_input_rejected_before_execution(self):
+        for env in ({'COMPILE_PATHS': '[]'}, {'COMPILE_PATHS': '"."'}, {'COMPILE_PATHS': '["../"]'}, {'TEST_VERBOSITY': '9'}, {'COMPILE_EXCLUDE': '['}):
+            result = self.execute({'tests/test_ok.py': ''}, env, step='Validate inputs')
+            self.assertNotEqual(result.returncode, 0, env)

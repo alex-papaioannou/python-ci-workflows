@@ -54,3 +54,5 @@ Set `top-level-directory` for package-based discovery. Discovered directories mu
 `compile-paths` is a JSON array, default `["."]`. Missing targets fail; select source paths to avoid generated or vendored code.
 
 `compile-exclude` is an optional Python regular expression matched against paths by compileall; it does not affect test discovery.
+
+An early validation step rejects nonexistent/out-of-checkout paths, invalid JSON target lists, verbosity values, filename globs, and exclusion regexes. GitHub validates matrix and job-level settings before steps can run.
