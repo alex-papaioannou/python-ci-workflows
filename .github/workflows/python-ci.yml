@@ -67,6 +67,47 @@ jobs:
       - uses: actions/setup-python@v6
         with:
           python-version: ${{ matrix.python-version }}
+      - name: Validate inputs
+        shell: python
+        env:
+          TEST_DIRECTORY: ${{ inputs.test-directory }}
+          TEST_PATTERN: ${{ inputs.test-pattern }}
+          TOP_LEVEL_DIRECTORY: ${{ inputs.top-level-directory }}
+          TEST_VERBOSITY: ${{ inputs.test-verbosity }}
+          TEST_FAIL_FAST: ${{ inputs.test-fail-fast }}
+          COMPILE_PATHS: ${{ inputs.compile-paths }}
+          COMPILE_EXCLUDE: ${{ inputs.compile-exclude }}
+        run: |
+          import json
+          import os
+          from pathlib import Path
+          import re
+          
+          def inside(value):
+              path = Path(value).resolve()
+              root = Path(os.environ.get('GITHUB_WORKSPACE', os.getcwd())).resolve()
+              if not path.is_relative_to(root):
+                  raise SystemExit(f'Path is outside the checkout: {value}')
+              return path
+          
+          for key in ('TEST_DIRECTORY', 'TOP_LEVEL_DIRECTORY'):
+              value = os.environ.get(key)
+              if value and not inside(value).is_dir():
+                  raise SystemExit(f'{key} must name an existing directory')
+          paths = json.loads(os.environ.get('COMPILE_PATHS', '["."]'))
+          if not isinstance(paths, list) or not paths or any(not isinstance(p, str) or not p for p in paths):
+              raise SystemExit('compile-paths must be a nonempty JSON array of path strings')
+          for path in paths:
+              if not inside(path).exists():
+                  raise SystemExit(f'Compilation target does not exist: {path}')
+          if os.environ.get('TEST_VERBOSITY', '2') not in ('0', '1', '2'):
+              raise SystemExit('test-verbosity must be 0, 1, or 2')
+          if os.environ.get('TEST_FAIL_FAST', 'false').lower() not in ('true', 'false'):
+              raise SystemExit('test-fail-fast must be boolean')
+          pattern = os.environ.get('TEST_PATTERN', 'test*.py')
+          if not pattern or '/' in pattern or '\\' in pattern:
+              raise SystemExit('test-pattern must be a nonempty filename glob')
+          re.compile(os.environ.get('COMPILE_EXCLUDE', ''))
       - name: Check Python syntax
         shell: python
         env:
