@@ -32,3 +32,5 @@ optional Ruff checks, and optional package-build validation.
 ## Workflow behavior tests
 
 The test suite executes the embedded runner in temporary consumer projects. It checks successful root imports, failing tests, import failures, empty discovery, and compilation errors.
+
+Set `python-versions: '["3.11", "3.13"]'` under the reusable job's `with:`. Supply a nonempty JSON array of version strings; GitHub expands it before running jobs.
