@@ -20,3 +20,4 @@ jobs:
       mypy-version: "2.4.0"
       lint-paths: '["tests", ".github/actions/python-ci"]'
       requirements-file: requirements-dev.txt
+      audit-version: "2.10.1"

@@ -586,3 +586,52 @@ class UvInstallerTests(StepHarness, unittest.TestCase):
             step="Validate inputs",
         )
         self.assertEqual(ok.returncode, 0, ok.stderr)
+
+
+class AuditTests(StepHarness, unittest.TestCase):
+    def test_audit_inputs_validated(self):
+        for env in (
+            {"AUDIT_VERSION": "latest"},
+            {"AUDIT_IGNORE": "GHSA-1"},
+            {"AUDIT_IGNORE": '[""]'},
+        ):
+            result = self.execute({"tests/test_ok.py": ""}, env, step="Validate inputs")
+            self.assertNotEqual(result.returncode, 0, env)
+
+    def test_audit_reports_vulnerable_dependency(self):
+        venv = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, venv, ignore_errors=True)
+        subprocess.run([sys.executable, "-m", "venv", venv], check=True)
+        python = Path(venv) / (
+            "Scripts/python.exe" if os.name == "nt" else "bin/python"
+        )
+        subprocess.run(
+            [str(python), "-m", "pip", "install", "-q", "urllib3==1.26.0"], check=True
+        )
+        with tempfile.TemporaryDirectory() as out:
+            summary = Path(out) / "summary.md"
+            result = self.execute(
+                {},
+                {"AUDIT_VERSION": "2.10.1", "GITHUB_STEP_SUMMARY": str(summary)},
+                step="Audit dependencies",
+                executable=str(python),
+            )
+            self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
+            self.assertTrue(summary.exists(), result.stdout + result.stderr)
+            self.assertIn("urllib3", summary.read_text(encoding="utf-8"))
+
+    def test_audit_skips_interpreter_bootstrap_packages(self):
+        venv = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, venv, ignore_errors=True)
+        subprocess.run([sys.executable, "-m", "venv", venv], check=True)
+        python = Path(venv) / (
+            "Scripts/python.exe" if os.name == "nt" else "bin/python"
+        )
+        result = self.execute(
+            {},
+            {"AUDIT_VERSION": "2.10.1"},
+            step="Audit dependencies",
+            executable=str(python),
+        )
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn("No third-party packages to audit", result.stdout)

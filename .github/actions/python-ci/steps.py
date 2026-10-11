@@ -100,6 +100,16 @@ def validate() -> int:
         raise SystemExit(
             "project-extras requires install-project: true or a uv.lock requirements-file"
         )
+    if not VERSION.fullmatch(env("AUDIT_VERSION")):
+        raise SystemExit("audit-version must be empty or a version such as 2.10.1")
+    try:
+        ignore = json.loads(env("AUDIT_IGNORE", "[]"))
+    except ValueError:
+        ignore = None
+    if not isinstance(ignore, list) or any(
+        not isinstance(v, str) or not v for v in ignore
+    ):
+        raise SystemExit("audit-ignore must be a JSON array of vulnerability IDs")
     if env("INSTALLER", "pip") not in ("pip", "uv"):
         raise SystemExit("installer must be pip or uv")
     if not VERSION.fullmatch(env("UV_VERSION")) or (
@@ -203,6 +213,99 @@ def install() -> int:
         no_deps = ["--no-deps"] if env("REQUIREMENTS_FILE") else []
         return packages("--editable", target, *no_deps)
     return 0
+
+
+BOOTSTRAP_PACKAGES = {"pip", "setuptools", "wheel"}
+
+
+def canonical(name: str) -> str:
+    return re.sub(r"[-_.]+", "-", name).lower()
+
+
+def audited_requirements() -> list[str]:
+    """Pin every installed distribution except editable installs and bootstrap tools.
+
+    pip, setuptools and wheel ship with the interpreter rather than the project, so
+    they are audited only when the requirements file pins them.
+    """
+    import importlib.metadata
+
+    pinned = set()
+    if env("REQUIREMENTS_FILE") and Path(env("REQUIREMENTS_FILE")).suffix == ".txt":
+        text = Path(env("REQUIREMENTS_FILE")).read_text(encoding="utf-8")
+        pinned = {
+            canonical(m)
+            for m in re.findall(
+                r"^([A-Za-z0-9][A-Za-z0-9._-]*)\s*==", text, re.MULTILINE
+            )
+        }
+    requirements = {}
+    for dist in importlib.metadata.distributions():
+        name = canonical(dist.metadata["Name"] or "")
+        direct = dist.read_text("direct_url.json") or "{}"
+        if not name or json.loads(direct).get("dir_info", {}).get("editable"):
+            continue
+        if name in BOOTSTRAP_PACKAGES and name not in pinned:
+            continue
+        requirements[name] = f"{name}=={dist.version}"
+    return sorted(requirements.values())
+
+
+def audit() -> int:
+    # Run pip-audit from its own environment so it cannot change, or be broken by,
+    # the dependencies it is auditing.
+    import venv
+
+    tools = tempfile.mkdtemp(prefix="pip-audit-")
+    venv.EnvBuilder(with_pip=True).create(tools)
+    auditor = os.path.join(tools, "Scripts" if os.name == "nt" else "bin", "python")
+    install = [
+        auditor,
+        "-m",
+        "pip",
+        "install",
+        "--disable-pip-version-check",
+        "-q",
+        "pip-audit==" + env("AUDIT_VERSION"),
+    ]
+    if subprocess.run(install, check=False).returncode:
+        raise SystemExit("Could not install pip-audit")
+    requirements = audited_requirements()
+    if not requirements:
+        print("No third-party packages to audit")
+        return 0
+    listing = os.path.join(tools, "installed.txt")
+    Path(listing).write_text("\n".join(requirements) + "\n", encoding="utf-8")
+    report = os.path.join(tools, "audit.md")
+    command = [
+        auditor,
+        "-m",
+        "pip_audit",
+        "-r",
+        listing,
+        "--no-deps",
+        "--disable-pip",
+        "--desc",
+        "on",
+    ]
+    command += ["-f", "markdown", "-o", report]
+    command += [
+        arg
+        for vuln in json.loads(env("AUDIT_IGNORE", "[]"))
+        for arg in ("--ignore-vuln", vuln)
+    ]
+    # Advisory text is Unicode; avoid the Windows ANSI code page.
+    code = subprocess.run(
+        command, check=False, env={**os.environ, "PYTHONUTF8": "1"}
+    ).returncode
+    text = Path(report).read_text(encoding="utf-8") if os.path.exists(report) else ""
+    if text.strip():
+        sys.stdout.reconfigure(errors="replace")  # type: ignore[union-attr]
+        print(text)
+        if env("GITHUB_STEP_SUMMARY"):
+            with open(env("GITHUB_STEP_SUMMARY"), "a", encoding="utf-8") as summary:
+                summary.write(f"### Dependency audit\n\n{text}\n")
+    return code
 
 
 def ruff() -> int:
@@ -445,6 +548,7 @@ def report_result() -> int:
 STEPS = {
     "validate": validate,
     "install": install,
+    "audit": audit,
     "ruff": ruff,
     "mypy": mypy,
     "compile": compile_sources,
