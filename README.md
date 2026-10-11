@@ -70,6 +70,8 @@ inside the checkout. JSON arrays are passed as strings.
 | Input | Type | Default | Description |
 | --- | --- | --- | --- |
 | `requirements-file` | string | `""` | pip requirements file installed before checks, with pip caching keyed on it. |
+| `install-project` | boolean | `false` | `pip install --editable .` after requirements. With a `requirements-file`, dependencies are assumed locked and installed with `--no-deps`. |
+| `project-extras` | string | `""` | Comma-separated extras installed with the project, such as `test,dev`. |
 | `require-hashes` | boolean | `true` | Install with `--require-hashes`. Generate files with `pip-compile --generate-hashes` or `uv pip compile --generate-hashes`. |
 
 ### Tests

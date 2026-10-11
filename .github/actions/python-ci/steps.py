@@ -94,6 +94,17 @@ def validate() -> int:
         raise SystemExit("coverage-fail-under must be a number from 0 to 100")
     if env("JUNIT_FILE"):
         inside(env("JUNIT_FILE"))
+    extras = [e.strip() for e in env("PROJECT_EXTRAS").split(",") if e.strip()]
+    if any(not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]*", e) for e in extras):
+        raise SystemExit("project-extras must be a comma-separated list of extra names")
+    if extras and not flag("INSTALL_PROJECT"):
+        raise SystemExit("project-extras requires install-project: true")
+    if flag("INSTALL_PROJECT") and not (
+        Path("pyproject.toml").is_file() or Path("setup.py").is_file()
+    ):
+        raise SystemExit(
+            "install-project requires pyproject.toml or setup.py in working-directory"
+        )
     if flag("BUILD_PACKAGE") and not Path("pyproject.toml").is_file():
         raise SystemExit("build-package requires pyproject.toml in working-directory")
     if env("TEST_VERBOSITY", "2") not in ("0", "1", "2"):
@@ -120,10 +131,21 @@ def validate() -> int:
 
 
 def install() -> int:
-    command = ["-r", env("REQUIREMENTS_FILE")]
-    if flag("REQUIRE_HASHES", default=True):
-        command.insert(0, "--require-hashes")
-    return pip_install(*command)
+    if env("REQUIREMENTS_FILE"):
+        command = ["-r", env("REQUIREMENTS_FILE")]
+        if flag("REQUIRE_HASHES", default=True):
+            command.insert(0, "--require-hashes")
+        if pip_install(*command):
+            return 1
+    if flag("INSTALL_PROJECT"):
+        extras = ",".join(
+            e.strip() for e in env("PROJECT_EXTRAS").split(",") if e.strip()
+        )
+        target = f".[{extras}]" if extras else "."
+        # Locked requirements already pin the dependencies; only add the project.
+        no_deps = ["--no-deps"] if env("REQUIREMENTS_FILE") else []
+        return pip_install("--editable", target, *no_deps)
+    return 0
 
 
 def ruff() -> int:
