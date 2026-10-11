@@ -165,9 +165,12 @@ class WorkflowTests(unittest.TestCase):
         self.assertIn("deprecated", result.stderr)
 
     def test_actions_pinned_to_commit_shas(self):
-        for line in WORKFLOW.read_text().splitlines():
-            if "uses:" in line:
-                self.assertRegex(line, r"@[0-9a-f]{40}\b", line)
+        for workflow in WORKFLOW.parent.glob("*.yml"):
+            for line in workflow.read_text().splitlines():
+                if "uses:" in line and "uses: ./" not in line:
+                    self.assertRegex(
+                        line, r"@[0-9a-f]{40}\b", f"{workflow.name}: {line}"
+                    )
 
     def test_missing_requirements_file_rejected(self):
         result = self.execute(
