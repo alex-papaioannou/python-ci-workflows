@@ -1,0 +1,43 @@
+name: Release
+on:
+  push:
+    branches: [main]
+    paths: [CHANGELOG.md]
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: release
+  cancel-in-progress: false
+jobs:
+  release:
+    if: github.repository == 'alex-papaioannou/python-ci-workflows'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          persist-credentials: false
+      - name: Read the newest changelog entry
+        id: notes
+        run: python3 .github/scripts/release_notes.py "$RUNNER_TEMP/notes.md"
+      - name: Publish the release and move the major tag
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ steps.notes.outputs.version }}
+          MAJOR: ${{ steps.notes.outputs.major }}
+        run: |
+          if gh release view "v$VERSION" --repo "$GITHUB_REPOSITORY" > /dev/null 2>&1; then
+            echo "v$VERSION is already released; nothing to do."
+            exit 0
+          fi
+          gh release create "v$VERSION" --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" \
+            --title "v$VERSION" --notes-file "$RUNNER_TEMP/notes.md" --latest
+          if gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/$MAJOR" > /dev/null 2>&1; then
+            gh api -X PATCH "repos/$GITHUB_REPOSITORY/git/refs/tags/$MAJOR" -f sha="$GITHUB_SHA" -F force=true
+          else
+            gh api -X POST "repos/$GITHUB_REPOSITORY/git/refs" -f ref="refs/tags/$MAJOR" -f sha="$GITHUB_SHA"
+          fi
+          echo "Released v$VERSION and pointed $MAJOR at $GITHUB_SHA"

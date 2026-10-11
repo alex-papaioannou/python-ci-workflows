@@ -19,6 +19,6 @@ jobs:
       experimental-python-versions: '["3.14t", "3.15"]'
       max-parallel: 18
       mypy-version: "2.4.0"
-      lint-paths: '["tests", ".github/actions/python-ci"]'
+      lint-paths: '["tests", ".github/actions/python-ci", ".github/scripts"]'
       requirements-file: requirements-dev.txt
       audit-version: "2.10.1"
