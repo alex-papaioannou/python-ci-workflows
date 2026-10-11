@@ -1,5 +1,6 @@
 """Execute the actual embedded workflow runner against temporary consumers."""
 
+import importlib.util
 import os
 import subprocess
 import sys
@@ -225,3 +226,26 @@ class WorkflowTests(unittest.TestCase):
             {"tests/test_ok.py": ""}, {"MYPY_VERSION": "newest"}, step="Validate inputs"
         )
         self.assertNotEqual(invalid.returncode, 0)
+
+    @unittest.skipUnless(
+        importlib.util.find_spec("coverage"), "coverage is not installed"
+    )
+    def test_coverage_threshold(self):
+        files = {
+            "lib.py": "def used():\n    return 1\n\n\ndef unused():\n    return 2\n",
+            "tests/test_lib.py": "import unittest\nfrom lib import used\n\n\nclass T(unittest.TestCase):\n    def test_used(self):\n        self.assertEqual(used(), 1)\n",
+        }
+        env = {"COVERAGE_VERSION": "7.16.2", "COVERAGE_FAIL_UNDER": "100"}
+        low = self.execute(files, env)
+        self.assertNotEqual(low.returncode, 0)
+        self.assertIn("below the required 100%", low.stderr)
+        env["COVERAGE_FAIL_UNDER"] = "50"
+        ok = self.execute(files, env)
+        self.assertEqual(ok.returncode, 0, ok.stderr)
+        for value in ("101", "-1", "most"):
+            invalid = self.execute(
+                {"tests/test_ok.py": ""},
+                {"COVERAGE_FAIL_UNDER": value},
+                step="Validate inputs",
+            )
+            self.assertNotEqual(invalid.returncode, 0, value)

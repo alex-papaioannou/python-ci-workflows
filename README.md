@@ -66,3 +66,5 @@ Set `warnings-as-errors: true` to set `PYTHONWARNINGS=error` for job steps. This
 Set `ruff-version` (for example `"0.17.0"`) to run `ruff check` and `ruff format --check` on the first Python version in the matrix. Findings appear as pull request annotations. Set `ruff-format: false` to lint without enforcing formatting. `lint-paths` is a JSON array, default `["."]`; Ruff reads the project's own `pyproject.toml` or `ruff.toml`.
 
 Set `mypy-version` (for example `"2.4.0"`) to type-check `lint-paths` with mypy on every Python version in the matrix. mypy reads `[tool.mypy]` from the project's `pyproject.toml`; install third-party stubs through `requirements-file`.
+
+Set `coverage-version` (for example `"7.16.2"`) to measure the test run with coverage.py. The job prints a report, uploads `coverage.xml` as the `coverage-<python version>` artifact, and fails when the total falls below `coverage-fail-under` (default 0). Configure omissions in `[tool.coverage]`.
