@@ -9,3 +9,5 @@ permissions:
 jobs:
   smoke:
     uses: ./.github/workflows/python-ci.yml
+    with:
+      ruff-version: "0.17.0"

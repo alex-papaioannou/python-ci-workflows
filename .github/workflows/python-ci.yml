@@ -62,6 +62,18 @@ on:
         description: "Require hashes for every installed requirement"
         type: boolean
         default: true
+      ruff-version:
+        description: "Ruff version to run lint checks with; empty disables Ruff"
+        type: string
+        default: ""
+      ruff-format:
+        description: "Also run ruff format --check when Ruff is enabled"
+        type: boolean
+        default: true
+      lint-paths:
+        description: "JSON array of files or directories for lint and type checks"
+        type: string
+        default: "[\".\"]"
 permissions:
   contents: read
 jobs:
@@ -99,6 +111,8 @@ jobs:
           COMPILE_PATHS: ${{ inputs.compile-paths }}
           COMPILE_EXCLUDE: ${{ inputs.compile-exclude }}
           REQUIREMENTS_FILE: ${{ inputs.requirements-file }}
+          RUFF_VERSION: ${{ inputs.ruff-version }}
+          LINT_PATHS: ${{ inputs.lint-paths }}
         run: |
           import json
           import os
@@ -125,6 +139,14 @@ jobs:
           for path in paths:
               if not inside(path).exists():
                   raise SystemExit(f'Compilation target does not exist: {path}')
+          lint_paths = json.loads(os.environ.get('LINT_PATHS', '["."]'))
+          if not isinstance(lint_paths, list) or not lint_paths or any(not isinstance(p, str) or not p for p in lint_paths):
+              raise SystemExit('lint-paths must be a nonempty JSON array of path strings')
+          for path in lint_paths:
+              if not inside(path).exists():
+                  raise SystemExit(f'Lint target does not exist: {path}')
+          if not re.fullmatch(r'|\d+(\.\d+){0,2}', os.environ.get('RUFF_VERSION', '')):
+              raise SystemExit('ruff-version must be empty or a version such as 0.6.9')
           if os.environ.get('TEST_VERBOSITY', '2') not in ('0', '1', '2'):
               raise SystemExit('test-verbosity must be 0, 1, or 2')
           if os.environ.get('TEST_FAIL_FAST', 'false').lower() not in ('true', 'false'):
@@ -147,6 +169,27 @@ jobs:
           if os.environ.get('REQUIRE_HASHES', 'true').lower() == 'true':
               command.insert(4, '--require-hashes')
           raise SystemExit(subprocess.run(command).returncode)
+      - name: Lint with Ruff
+        if: inputs.ruff-version != '' && matrix.python-version == fromJSON(inputs.python-versions)[0]
+        shell: python
+        env:
+          RUFF_VERSION: ${{ inputs.ruff-version }}
+          RUFF_FORMAT: ${{ inputs.ruff-format }}
+          LINT_PATHS: ${{ inputs.lint-paths }}
+        run: |
+          import json
+          import os
+          import subprocess
+          import sys
+          def run(*args):
+              return subprocess.run([sys.executable, *args]).returncode
+          if run('-m', 'pip', 'install', '--disable-pip-version-check', '-q', 'ruff==' + os.environ['RUFF_VERSION']):
+              raise SystemExit('Could not install Ruff')
+          paths = json.loads(os.environ.get('LINT_PATHS', '["."]'))
+          failed = run('-m', 'ruff', 'check', '--output-format=github', *paths)
+          if os.environ.get('RUFF_FORMAT', 'true').lower() == 'true':
+              failed = run('-m', 'ruff', 'format', '--check', '--diff', *paths) or failed
+          raise SystemExit(1 if failed else 0)
       - name: Check Python syntax
         shell: python
         env:
