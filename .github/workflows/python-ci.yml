@@ -9,7 +9,7 @@ on:
       python-versions:
         description: "JSON array of Python versions"
         type: string
-        default: "[\"3.11\", \"3.12\", \"3.13\"]"
+        default: "[\"3.11\", \"3.12\", \"3.13\", \"3.14\"]"
       allow-prereleases:
         description: "Allow alpha, beta, and release-candidate Python versions"
         type: boolean
