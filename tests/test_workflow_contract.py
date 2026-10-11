@@ -27,7 +27,7 @@ def script(name):
     raise AssertionError(f"Step {name!r} does not run a step script")
 
 
-class WorkflowTests(unittest.TestCase):
+class StepHarness:
     def execute(self, files, env=None, step="Run tests and reject empty test suites"):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -48,6 +48,8 @@ class WorkflowTests(unittest.TestCase):
                 capture_output=True,
             )
 
+
+class WorkflowTests(StepHarness, unittest.TestCase):
     def test_success_and_consumer_root_import(self):
         result = self.execute(
             {
@@ -414,3 +416,57 @@ class WorkflowTests(unittest.TestCase):
         )
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("KeyError", result.stderr)
+
+
+PYTEST = {"TEST_RUNNER": "pytest", "PYTEST_VERSION": "9.1.1"}
+
+
+@unittest.skipUnless(importlib.util.find_spec("pytest"), "pytest is not installed")
+class PytestRunnerTests(StepHarness, unittest.TestCase):
+    def test_pytest_success_failure_and_summary(self):
+        tests = (
+            "def test_ok():\n    assert True\n\n\ndef test_bad():\n    assert 1 == 2\n"
+        )
+        with tempfile.TemporaryDirectory() as out:
+            summary = Path(out) / "summary.md"
+            result = self.execute(
+                {"tests/test_mix.py": tests},
+                {**PYTEST, "GITHUB_STEP_SUMMARY": str(summary)},
+            )
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("| 1 | 1 | 0 | 0 |", summary.read_text())
+            self.assertIn("test_bad", summary.read_text())
+        ok = self.execute(
+            {
+                "lib.py": "VALUE = 3\n",
+                "tests/test_ok.py": "from lib import VALUE\n\n\ndef test_ok():\n    assert VALUE == 3\n",
+            },
+            PYTEST,
+        )
+        self.assertEqual(ok.returncode, 0, ok.stdout + ok.stderr)
+
+    def test_pytest_empty_suite_and_args(self):
+        empty = self.execute({"tests/test_none.py": ""}, PYTEST)
+        self.assertNotEqual(empty.returncode, 0)
+        self.assertIn("No tests discovered", empty.stderr)
+        files = {
+            "tests/test_marks.py": "import pytest\n\n\n@pytest.mark.slow\ndef test_slow():\n    assert False\n\n\ndef test_fast():\n    pass\n"
+        }
+        result = self.execute(
+            files,
+            {
+                **PYTEST,
+                "PYTEST_ARGS": '-m "not slow" -W ignore::pytest.PytestUnknownMarkWarning',
+            },
+        )
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
+    def test_pytest_inputs_validated(self):
+        for env in (
+            {"TEST_RUNNER": "nose"},
+            {**PYTEST, "PYTEST_ARGS": '"unterminated'},
+            {"PYTEST_ARGS": "-x"},
+            {"TEST_RUNNER": "pytest", "PYTEST_VERSION": ""},
+        ):
+            result = self.execute({"tests/test_ok.py": ""}, env, step="Validate inputs")
+            self.assertNotEqual(result.returncode, 0, env)

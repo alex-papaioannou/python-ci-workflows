@@ -19,3 +19,4 @@ jobs:
       experimental-python-versions: '["3.15"]'
       mypy-version: "2.4.0"
       lint-paths: '["tests", ".github/actions/python-ci"]'
+      requirements-file: requirements-dev.txt

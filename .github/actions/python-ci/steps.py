@@ -12,6 +12,7 @@ import glob
 import json
 import os
 import re
+import shlex
 import subprocess
 import sys
 import tempfile
@@ -97,6 +98,18 @@ def validate() -> int:
         raise SystemExit("build-package requires pyproject.toml in working-directory")
     if env("TEST_VERBOSITY", "2") not in ("0", "1", "2"):
         raise SystemExit("test-verbosity must be 0, 1, or 2")
+    if env("TEST_RUNNER", "unittest") not in ("unittest", "pytest"):
+        raise SystemExit("test-runner must be unittest or pytest")
+    if not VERSION.fullmatch(env("PYTEST_VERSION")) or (
+        env("TEST_RUNNER") == "pytest" and not env("PYTEST_VERSION")
+    ):
+        raise SystemExit("pytest-version must be a version such as 9.1.1")
+    try:
+        shlex.split(env("PYTEST_ARGS"))
+    except ValueError as error:
+        raise SystemExit(f"pytest-args could not be parsed: {error}") from None
+    if env("TEST_RUNNER", "unittest") != "pytest" and env("PYTEST_ARGS"):
+        raise SystemExit("pytest-args requires test-runner: pytest")
     if env("TEST_FAIL_FAST", "false").lower() not in ("true", "false"):
         raise SystemExit("test-fail-fast must be boolean")
     pattern = env("TEST_PATTERN", "test*.py")
@@ -152,8 +165,13 @@ def build() -> int:
     )
 
 
-def install_coverage() -> int:
-    return pip_install("-q", "coverage==" + env("COVERAGE_VERSION"))
+def install_test_tools() -> int:
+    tools = []
+    if env("COVERAGE_VERSION"):
+        tools.append("coverage==" + env("COVERAGE_VERSION"))
+    if env("TEST_RUNNER", "unittest") == "pytest":
+        tools.append("pytest==" + env("PYTEST_VERSION"))
+    return pip_install("-q", *tools) if tools else 0
 
 
 class RecordingResult(unittest.TextTestResult):
@@ -194,7 +212,13 @@ class RecordingResult(unittest.TextTestResult):
         self._record(test, "failure", "Unexpected success")
 
 
-def write_summary(records, counts) -> None:
+def count(outcomes: list[str]) -> dict[str, int]:
+    return {
+        name: outcomes.count(name) for name in ("passed", "failure", "error", "skipped")
+    }
+
+
+def write_summary(counts: dict[str, int], failing: list[tuple[str, str]]) -> None:
     summary_path = env("GITHUB_STEP_SUMMARY")
     if not summary_path:
         return
@@ -208,9 +232,9 @@ def write_summary(records, counts) -> None:
         summary.write(
             f"| {counts['passed']} | {counts['failure']} | {counts['error']} | {counts['skipped']} |\n\n"
         )
-        for test, outcome, _, _ in records:
-            if outcome in ("failure", "error"):
-                summary.write(f"- {outcome}: `{test.id()}`\n")
+        summary.writelines(
+            f"- {outcome}: `{test_id}`\n" for outcome, test_id in failing
+        )
 
 
 def write_junit(path, records, counts) -> None:
@@ -236,15 +260,7 @@ def write_junit(path, records, counts) -> None:
     ET.ElementTree(suite).write(path, encoding="utf-8", xml_declaration=True)
 
 
-def test() -> int:
-    # Import the project under test, not this script's directory.
-    sys.path[0] = os.getcwd()
-    cov = None
-    if env("COVERAGE_VERSION"):
-        import coverage  # type: ignore[import-not-found,unused-ignore]
-
-        cov = coverage.Coverage(data_file=".coverage", source=[os.getcwd()])
-        cov.start()
+def run_unittest() -> int:
     suite = unittest.defaultTestLoader.discover(
         env("TEST_DIRECTORY", "tests"),
         pattern=env("TEST_PATTERN", "test*.py"),
@@ -259,13 +275,71 @@ def test() -> int:
     )
     result = runner.run(suite)
     records = RecordingResult.records
-    counts = {
-        name: sum(1 for r in records if r[1] == name)
-        for name in ("passed", "failure", "error", "skipped")
-    }
-    write_summary(records, counts)
+    counts = count([r[1] for r in records])
+    write_summary(
+        counts, [(r[1], r[0].id()) for r in records if r[1] in ("failure", "error")]
+    )
     if env("JUNIT_FILE"):
         write_junit(env("JUNIT_FILE"), records, counts)
+    return 0 if result.wasSuccessful() else 1
+
+
+def junit_outcomes(path: str) -> tuple[dict[str, int], list[tuple[str, str]]]:
+    outcomes, failing = [], []
+    for case in ET.parse(path).getroot().iter("testcase"):
+        test_id = f"{case.get('classname')}.{case.get('name')}"
+        outcome = next(
+            (
+                tag
+                for tag in ("failure", "error", "skipped")
+                if case.find(tag) is not None
+            ),
+            "passed",
+        )
+        outcomes.append(outcome)
+        if outcome in ("failure", "error"):
+            failing.append((outcome, test_id))
+    return count(outcomes), failing
+
+
+def run_pytest() -> int:
+    import pytest  # type: ignore[import-not-found,unused-ignore]
+
+    report = env("JUNIT_FILE") or os.path.join(
+        tempfile.mkdtemp(prefix="pytest-"), "junit.xml"
+    )
+    verbosity = {"0": ["-q"], "1": [], "2": ["-v"]}[env("TEST_VERBOSITY", "2")]
+    args = [
+        env("TEST_DIRECTORY", "tests"),
+        "-o",
+        f"python_files={env('TEST_PATTERN', 'test*.py')}",
+        "-p",
+        "no:cacheprovider",
+        f"--junitxml={report}",
+        *verbosity,
+        *(["-x"] if flag("TEST_FAIL_FAST") else []),
+        *shlex.split(env("PYTEST_ARGS")),
+    ]
+    code = int(pytest.main(args))
+    if code == pytest.ExitCode.NO_TESTS_COLLECTED:
+        raise SystemExit("No tests discovered")
+    if os.path.exists(report):
+        write_summary(*junit_outcomes(report))
+    return 0 if code == pytest.ExitCode.OK else 1
+
+
+def test() -> int:
+    # Import the project under test, not this script's directory.
+    sys.path[0] = os.getcwd()
+    cov = None
+    if env("COVERAGE_VERSION"):
+        import coverage  # type: ignore[import-not-found,unused-ignore]
+
+        cov = coverage.Coverage(data_file=".coverage", source=[os.getcwd()])
+        cov.start()
+    code = (
+        run_pytest() if env("TEST_RUNNER", "unittest") == "pytest" else run_unittest()
+    )
     if cov is not None:
         cov.stop()
         cov.save()
@@ -278,7 +352,7 @@ def test() -> int:
                 file=sys.stderr,
             )
             return 1
-    return 0 if result.wasSuccessful() else 1
+    return code
 
 
 def report_result() -> int:
@@ -296,7 +370,7 @@ STEPS = {
     "mypy": mypy,
     "compile": compile_sources,
     "build": build,
-    "install-coverage": install_coverage,
+    "install-test-tools": install_test_tools,
     "test": test,
     "result": report_result,
 }
