@@ -78,6 +78,14 @@ on:
         description: "mypy version to type-check lint-paths with; empty disables mypy"
         type: string
         default: ""
+      coverage-version:
+        description: "coverage.py version to measure tests with; empty disables coverage"
+        type: string
+        default: ""
+      coverage-fail-under:
+        description: "Minimum total coverage percentage from 0 to 100"
+        type: number
+        default: 0
 permissions:
   contents: read
 jobs:
@@ -118,6 +126,8 @@ jobs:
           RUFF_VERSION: ${{ inputs.ruff-version }}
           LINT_PATHS: ${{ inputs.lint-paths }}
           MYPY_VERSION: ${{ inputs.mypy-version }}
+          COVERAGE_VERSION: ${{ inputs.coverage-version }}
+          COVERAGE_FAIL_UNDER: ${{ inputs.coverage-fail-under }}
         run: |
           import json
           import os
@@ -154,6 +164,14 @@ jobs:
               raise SystemExit('ruff-version must be empty or a version such as 0.6.9')
           if not re.fullmatch(r'|\d+(\.\d+){0,2}', os.environ.get('MYPY_VERSION', '')):
               raise SystemExit('mypy-version must be empty or a version such as 1.11.2')
+          if not re.fullmatch(r'|\d+(\.\d+){0,2}', os.environ.get('COVERAGE_VERSION', '')):
+              raise SystemExit('coverage-version must be empty or a version such as 7.6.1')
+          try:
+              fail_under = float(os.environ.get('COVERAGE_FAIL_UNDER', '0'))
+          except ValueError:
+              fail_under = -1
+          if not 0 <= fail_under <= 100:
+              raise SystemExit('coverage-fail-under must be a number from 0 to 100')
           if os.environ.get('TEST_VERBOSITY', '2') not in ('0', '1', '2'):
               raise SystemExit('test-verbosity must be 0, 1, or 2')
           if os.environ.get('TEST_FAIL_FAST', 'false').lower() not in ('true', 'false'):
@@ -239,6 +257,17 @@ jobs:
               check = compileall.compile_dir if Path(path).is_dir() else compileall.compile_file
               ok = check(path, quiet=1, rx=exclude) and ok
           raise SystemExit(0 if ok else 1)
+      - name: Install coverage
+        if: inputs.coverage-version != ''
+        shell: python
+        env:
+          COVERAGE_VERSION: ${{ inputs.coverage-version }}
+        run: |
+          import os
+          import subprocess
+          import sys
+          command = [sys.executable, '-m', 'pip', 'install', '--disable-pip-version-check', '-q', 'coverage==' + os.environ['COVERAGE_VERSION']]
+          raise SystemExit(subprocess.run(command).returncode)
       - name: Run tests and reject empty test suites
         shell: python
         env:
@@ -249,13 +278,36 @@ jobs:
           TEST_FAIL_FAST: ${{ inputs.test-fail-fast }}
           COMPILE_PATHS: ${{ inputs.compile-paths }}
           COMPILE_EXCLUDE: ${{ inputs.compile-exclude }}
+          COVERAGE_VERSION: ${{ inputs.coverage-version }}
+          COVERAGE_FAIL_UNDER: ${{ inputs.coverage-fail-under }}
         run: |
           import os
           import sys
           import unittest
           sys.path.insert(0, os.getcwd())
+          cov = None
+          if os.environ.get('COVERAGE_VERSION'):
+              import coverage
+              cov = coverage.Coverage(data_file='.coverage', source=[os.getcwd()])
+              cov.start()
           suite = unittest.defaultTestLoader.discover(os.environ.get('TEST_DIRECTORY', 'tests'), pattern=os.environ.get('TEST_PATTERN', 'test*.py'), top_level_dir=os.environ.get('TOP_LEVEL_DIRECTORY') or None)
           if suite.countTestCases() == 0:
               raise SystemExit('No tests discovered')
           result = unittest.TextTestRunner(verbosity=int(os.environ.get("TEST_VERBOSITY", "2")), failfast=os.environ.get("TEST_FAIL_FAST", "false").lower() == "true").run(suite)
+          if cov is not None:
+              cov.stop()
+              cov.save()
+              total = cov.report(skip_empty=True)
+              cov.xml_report(outfile='coverage.xml')
+              minimum = float(os.environ.get('COVERAGE_FAIL_UNDER') or 0)
+              if total < minimum:
+                  print(f'Coverage {total:.2f}% is below the required {minimum:g}%', file=sys.stderr)
+                  sys.exit(1)
           sys.exit(0 if result.wasSuccessful() else 1)
+      - name: Upload coverage report
+        if: always() && inputs.coverage-version != ''
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
+        with:
+          name: coverage-${{ matrix.python-version }}
+          path: ${{ inputs.working-directory }}/coverage.xml
+          if-no-files-found: ignore
