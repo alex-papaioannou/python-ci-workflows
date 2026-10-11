@@ -126,6 +126,14 @@ on:
         description: "Extra pytest arguments, split like a shell command line"
         type: string
         default: ""
+      install-project:
+        description: "Install the project itself in editable mode"
+        type: boolean
+        default: false
+      project-extras:
+        description: "Comma-separated optional dependency groups to install with the project"
+        type: string
+        default: ""
 permissions:
   contents: read
 jobs:
@@ -157,8 +165,8 @@ jobs:
         with:
           python-version: ${{ matrix.python-version }}
           allow-prereleases: ${{ inputs.allow-prereleases }}
-          cache: ${{ inputs.requirements-file != '' && 'pip' || '' }}
-          cache-dependency-path: ${{ inputs.requirements-file != '' && format('{0}/{1}', inputs.working-directory, inputs.requirements-file) || '' }}
+          cache: ${{ (inputs.requirements-file != '' || inputs.install-project) && 'pip' || '' }}
+          cache-dependency-path: ${{ inputs.requirements-file != '' && format('{0}/{1}', inputs.working-directory, inputs.requirements-file) || inputs.install-project && format('{0}/pyproject.toml', inputs.working-directory) || '' }}
       - name: Load step scripts
         uses: $/.github/actions/python-ci
       - name: Validate inputs
@@ -181,12 +189,16 @@ jobs:
           TEST_RUNNER: ${{ inputs.test-runner }}
           PYTEST_VERSION: ${{ inputs.pytest-version }}
           PYTEST_ARGS: ${{ inputs.pytest-args }}
+          INSTALL_PROJECT: ${{ inputs.install-project }}
+          PROJECT_EXTRAS: ${{ inputs.project-extras }}
         run: python "$PYTHON_CI_STEPS" validate
       - name: Install dependencies
-        if: inputs.requirements-file != ''
+        if: inputs.requirements-file != '' || inputs.install-project
         env:
           REQUIREMENTS_FILE: ${{ inputs.requirements-file }}
           REQUIRE_HASHES: ${{ inputs.require-hashes }}
+          INSTALL_PROJECT: ${{ inputs.install-project }}
+          PROJECT_EXTRAS: ${{ inputs.project-extras }}
         run: python "$PYTHON_CI_STEPS" install
       - name: Lint with Ruff
         if: inputs.ruff-version != '' && matrix.python-version == fromJSON(inputs.python-versions)[0] && matrix.os == fromJSON(inputs.operating-systems)[0]

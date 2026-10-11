@@ -28,7 +28,13 @@ def script(name):
 
 
 class StepHarness:
-    def execute(self, files, env=None, step="Run tests and reject empty test suites"):
+    def execute(
+        self,
+        files,
+        env=None,
+        step="Run tests and reject empty test suites",
+        executable=sys.executable,
+    ):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             for name, content in files.items():
@@ -40,7 +46,7 @@ class StepHarness:
             process_env["GITHUB_STEP_SUMMARY"] = os.devnull
             process_env.update(env or {})
             return subprocess.run(
-                [sys.executable, str(STEPS), script(step)],
+                [executable, str(STEPS), script(step)],
                 check=False,
                 cwd=root,
                 env=process_env,
@@ -470,3 +476,51 @@ class PytestRunnerTests(StepHarness, unittest.TestCase):
         ):
             result = self.execute({"tests/test_ok.py": ""}, env, step="Validate inputs")
             self.assertNotEqual(result.returncode, 0, env)
+
+
+class ProjectInstallTests(StepHarness, unittest.TestCase):
+    def test_project_inputs_validated(self):
+        for env in (
+            {"PROJECT_EXTRAS": "test"},
+            {"INSTALL_PROJECT": "true", "PROJECT_EXTRAS": "test;rm"},
+            {"INSTALL_PROJECT": "true"},
+        ):
+            result = self.execute({"tests/test_ok.py": ""}, env, step="Validate inputs")
+            self.assertNotEqual(result.returncode, 0, env)
+        result = self.execute(
+            {"tests/test_ok.py": "", "pyproject.toml": ""},
+            {"INSTALL_PROJECT": "true", "PROJECT_EXTRAS": "test, dev"},
+            step="Validate inputs",
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+
+    def test_editable_install_with_extras(self):
+        pyproject = (
+            '[build-system]\nrequires = ["flit_core>=3.9,<4"]\nbuild-backend = "flit_core.buildapi"\n\n'
+            '[project]\nname = "fixture_src"\nversion = "1.0"\ndescription = "Fixture"\n\n'
+            "[project.optional-dependencies]\nnothing = []\n"
+        )
+        files = {"pyproject.toml": pyproject, "fixture_src/__init__.py": "VALUE = 5\n"}
+        with tempfile.TemporaryDirectory() as venv:
+            subprocess.run([sys.executable, "-m", "venv", venv], check=True)
+            python = Path(venv) / (
+                "Scripts/python.exe" if os.name == "nt" else "bin/python"
+            )
+            result = self.execute(
+                files,
+                {"INSTALL_PROJECT": "true", "PROJECT_EXTRAS": "nothing"},
+                step="Install dependencies",
+                executable=str(python),
+            )
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            check = subprocess.run(
+                [
+                    str(python),
+                    "-c",
+                    "import importlib.metadata as m; print(m.version('fixture_src'))",
+                ],
+                check=False,
+                capture_output=True,
+                text=True,
+            )
+            self.assertEqual(check.stdout.strip(), "1.0", check.stderr)
