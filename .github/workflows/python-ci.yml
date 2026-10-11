@@ -134,6 +134,14 @@ on:
         description: "Comma-separated optional dependency groups to install with the project"
         type: string
         default: ""
+      installer:
+        description: "Package installer for requirements and the project: pip or uv"
+        type: string
+        default: "pip"
+      uv-version:
+        description: "uv version used when installer is uv"
+        type: string
+        default: "0.11.32"
 permissions:
   contents: read
 jobs:
@@ -191,6 +199,8 @@ jobs:
           PYTEST_ARGS: ${{ inputs.pytest-args }}
           INSTALL_PROJECT: ${{ inputs.install-project }}
           PROJECT_EXTRAS: ${{ inputs.project-extras }}
+          INSTALLER: ${{ inputs.installer }}
+          UV_VERSION: ${{ inputs.uv-version }}
         run: python "$PYTHON_CI_STEPS" validate
       - name: Install dependencies
         if: inputs.requirements-file != '' || inputs.install-project
@@ -199,6 +209,8 @@ jobs:
           REQUIRE_HASHES: ${{ inputs.require-hashes }}
           INSTALL_PROJECT: ${{ inputs.install-project }}
           PROJECT_EXTRAS: ${{ inputs.project-extras }}
+          INSTALLER: ${{ inputs.installer }}
+          UV_VERSION: ${{ inputs.uv-version }}
         run: python "$PYTHON_CI_STEPS" install
       - name: Lint with Ruff
         if: inputs.ruff-version != '' && matrix.python-version == fromJSON(inputs.python-versions)[0] && matrix.os == fromJSON(inputs.operating-systems)[0]

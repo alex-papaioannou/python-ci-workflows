@@ -1,0 +1,5 @@
+[project]
+name = "demo"
+version = "1.0"
+requires-python = ">=3.11"
+dependencies = ["iniconfig==2.1.0"]

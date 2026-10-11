@@ -94,11 +94,24 @@ def validate() -> int:
         raise SystemExit("coverage-fail-under must be a number from 0 to 100")
     if env("JUNIT_FILE"):
         inside(env("JUNIT_FILE"))
-    extras = [e.strip() for e in env("PROJECT_EXTRAS").split(",") if e.strip()]
-    if any(not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]*", e) for e in extras):
+    if any(not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]*", e) for e in extras()):
         raise SystemExit("project-extras must be a comma-separated list of extra names")
-    if extras and not flag("INSTALL_PROJECT"):
-        raise SystemExit("project-extras requires install-project: true")
+    if extras() and not (flag("INSTALL_PROJECT") or is_uv_lock(requirements)):
+        raise SystemExit(
+            "project-extras requires install-project: true or a uv.lock requirements-file"
+        )
+    if env("INSTALLER", "pip") not in ("pip", "uv"):
+        raise SystemExit("installer must be pip or uv")
+    if not VERSION.fullmatch(env("UV_VERSION")) or (
+        env("INSTALLER") == "uv" and not env("UV_VERSION")
+    ):
+        raise SystemExit("uv-version must be a version such as 0.11.32")
+    if (
+        requirements
+        and (is_uv_lock(requirements) or is_pylock(requirements))
+        and env("INSTALLER", "pip") != "uv"
+    ):
+        raise SystemExit("uv.lock and pylock.toml requirements need installer: uv")
     if flag("INSTALL_PROJECT") and not (
         Path("pyproject.toml").is_file() or Path("setup.py").is_file()
     ):
@@ -130,21 +143,65 @@ def validate() -> int:
     return 0
 
 
+def extras() -> list[str]:
+    return [e.strip() for e in env("PROJECT_EXTRAS").split(",") if e.strip()]
+
+
+def is_uv_lock(path: str) -> bool:
+    return Path(path).name == "uv.lock"
+
+
+def is_pylock(path: str) -> bool:
+    return re.fullmatch(r"pylock(\.[^.]+)?\.toml", Path(path).name) is not None
+
+
 def install() -> int:
-    if env("REQUIREMENTS_FILE"):
-        command = ["-r", env("REQUIREMENTS_FILE")]
-        if flag("REQUIRE_HASHES", default=True):
+    use_uv = env("INSTALLER", "pip") == "uv"
+    if use_uv:
+        tool("uv==" + env("UV_VERSION"), "uv")
+
+    def packages(*args: str) -> int:
+        if use_uv:
+            return python(
+                "-m", "uv", "pip", "install", "--python", sys.executable, *args
+            )
+        return pip_install(*args)
+
+    requirements = env("REQUIREMENTS_FILE")
+    if requirements:
+        if is_uv_lock(requirements):
+            exported = os.path.join(
+                tempfile.mkdtemp(prefix="uv-export-"), "requirements.txt"
+            )
+            extra_args = [arg for name in extras() for arg in ("--extra", name)]
+            if python(
+                "-m",
+                "uv",
+                "export",
+                "--frozen",
+                "--format",
+                "requirements-txt",
+                "--no-emit-project",
+                *extra_args,
+                "--directory",
+                str(Path(requirements).parent),
+                "-o",
+                exported,
+            ):
+                raise SystemExit(
+                    "Could not export uv.lock; is it up to date with pyproject.toml?"
+                )
+            requirements = exported
+        command = ["-r", requirements]
+        if flag("REQUIRE_HASHES", default=True) and not is_pylock(requirements):
             command.insert(0, "--require-hashes")
-        if pip_install(*command):
+        if packages(*command):
             return 1
     if flag("INSTALL_PROJECT"):
-        extras = ",".join(
-            e.strip() for e in env("PROJECT_EXTRAS").split(",") if e.strip()
-        )
-        target = f".[{extras}]" if extras else "."
+        target = f".[{','.join(extras())}]" if extras() else "."
         # Locked requirements already pin the dependencies; only add the project.
         no_deps = ["--no-deps"] if env("REQUIREMENTS_FILE") else []
-        return pip_install("--editable", target, *no_deps)
+        return packages("--editable", target, *no_deps)
     return 0
 
 
