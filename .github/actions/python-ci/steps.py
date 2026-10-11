@@ -215,10 +215,45 @@ def install() -> int:
     return 0
 
 
+BOOTSTRAP_PACKAGES = {"pip", "setuptools", "wheel"}
+
+
+def canonical(name: str) -> str:
+    return re.sub(r"[-_.]+", "-", name).lower()
+
+
+def audited_requirements() -> list[str]:
+    """Pin every installed distribution except editable installs and bootstrap tools.
+
+    pip, setuptools and wheel ship with the interpreter rather than the project, so
+    they are audited only when the requirements file pins them.
+    """
+    import importlib.metadata
+
+    pinned = set()
+    if env("REQUIREMENTS_FILE") and Path(env("REQUIREMENTS_FILE")).suffix == ".txt":
+        text = Path(env("REQUIREMENTS_FILE")).read_text(encoding="utf-8")
+        pinned = {
+            canonical(m)
+            for m in re.findall(
+                r"^([A-Za-z0-9][A-Za-z0-9._-]*)\s*==", text, re.MULTILINE
+            )
+        }
+    requirements = {}
+    for dist in importlib.metadata.distributions():
+        name = canonical(dist.metadata["Name"] or "")
+        direct = dist.read_text("direct_url.json") or "{}"
+        if not name or json.loads(direct).get("dir_info", {}).get("editable"):
+            continue
+        if name in BOOTSTRAP_PACKAGES and name not in pinned:
+            continue
+        requirements[name] = f"{name}=={dist.version}"
+    return sorted(requirements.values())
+
+
 def audit() -> int:
     # Run pip-audit from its own environment so it cannot change, or be broken by,
     # the dependencies it is auditing.
-    import sysconfig
     import venv
 
     tools = tempfile.mkdtemp(prefix="pip-audit-")
@@ -235,21 +270,25 @@ def audit() -> int:
     ]
     if subprocess.run(install, check=False).returncode:
         raise SystemExit("Could not install pip-audit")
-    paths = sorted({sysconfig.get_path("purelib"), sysconfig.get_path("platlib")})
+    requirements = audited_requirements()
+    if not requirements:
+        print("No third-party packages to audit")
+        return 0
+    listing = os.path.join(tools, "installed.txt")
+    Path(listing).write_text("\n".join(requirements) + "\n", encoding="utf-8")
     report = os.path.join(tools, "audit.md")
     command = [
         auditor,
         "-m",
         "pip_audit",
-        "--skip-editable",
+        "-r",
+        listing,
+        "--no-deps",
+        "--disable-pip",
         "--desc",
         "on",
-        "-f",
-        "markdown",
-        "-o",
-        report,
     ]
-    command += [arg for path in paths for arg in ("--path", path)]
+    command += ["-f", "markdown", "-o", report]
     command += [
         arg
         for vuln in json.loads(env("AUDIT_IGNORE", "[]"))

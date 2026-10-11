@@ -227,6 +227,7 @@ jobs:
         env:
           AUDIT_VERSION: ${{ inputs.audit-version }}
           AUDIT_IGNORE: ${{ inputs.audit-ignore }}
+          REQUIREMENTS_FILE: ${{ inputs.requirements-file }}
         run: python "$PYTHON_CI_STEPS" audit
       - name: Lint with Ruff
         if: inputs.ruff-version != '' && matrix.python-version == fromJSON(inputs.python-versions)[0] && matrix.os == fromJSON(inputs.operating-systems)[0]

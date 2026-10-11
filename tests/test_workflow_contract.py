@@ -618,3 +618,19 @@ class AuditTests(StepHarness, unittest.TestCase):
             )
             self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
             self.assertIn("urllib3", summary.read_text())
+
+    def test_audit_skips_interpreter_bootstrap_packages(self):
+        venv = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, venv, ignore_errors=True)
+        subprocess.run([sys.executable, "-m", "venv", venv], check=True)
+        python = Path(venv) / (
+            "Scripts/python.exe" if os.name == "nt" else "bin/python"
+        )
+        result = self.execute(
+            {},
+            {"AUDIT_VERSION": "2.10.1"},
+            step="Audit dependencies",
+            executable=str(python),
+        )
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn("No third-party packages to audit", result.stdout)

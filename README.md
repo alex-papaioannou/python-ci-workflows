@@ -80,7 +80,7 @@ inside the checkout. JSON arrays are passed as strings.
 
 | Input | Type | Default | Description |
 | --- | --- | --- | --- |
-| `audit-version` | string | `""` | Scan the installed dependencies with this pip-audit version, once per run, against the PyPI vulnerability database. Findings fail the job and appear in the job summary. Empty disables the audit. |
+| `audit-version` | string | `""` | Scan the installed dependencies with this pip-audit version, once per run, against the PyPI vulnerability database. Editable installs and the interpreter's own pip, setuptools and wheel are skipped unless the requirements file pins them. Findings fail the job and appear in the job summary. Empty disables the audit. |
 | `audit-ignore` | string | `[]` | JSON array of vulnerability IDs to accept, such as `["GHSA-xxxx-xxxx-xxxx"]`. |
 
 ### Tests
