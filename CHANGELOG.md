@@ -18,7 +18,7 @@ First tagged release.
 - Pip requirements installation, hash-checked by default, with caching.
 - Optional Ruff lint and format checks.
 - Optional mypy type checking.
-- Optional coverage measurement with a minimum threshold and an uploaded report.
+- Optional coverage measurement with a minimum threshold, a per-file job summary table and an uploaded report.
 - Optional sdist and wheel builds checked with `twine check --strict`.
 - Optional cancellation of superseded runs.
 - Job summary of test results and optional JUnit XML reports.

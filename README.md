@@ -114,7 +114,7 @@ inside the checkout. JSON arrays are passed as strings.
 
 | Input | Type | Default | Description |
 | --- | --- | --- | --- |
-| `coverage-version` | string | `""` | Measure tests with this coverage.py version and upload `coverage.xml` as `coverage-<os>-<python>`. |
+| `coverage-version` | string | `""` | Measure tests with this coverage.py version. The job summary shows the total and a collapsible per-file table with missing lines, and `coverage.xml` is uploaded as `coverage-<os>-<python>`. |
 | `coverage-fail-under` | number | `0` | Fail when total coverage is below this percentage. |
 | `test-wheel` | boolean | `false` | After building, install the wheel (with `project-extras` and a `.txt` `requirements-file`) in a fresh virtual environment and run only a copy of the tests against it. This catches files missing from the wheel and broken package discovery. Requires `build-package`. |
 | `build-package` | boolean | `false` | Build an sdist and wheel and run `twine check --strict`, once per run. Requires `pyproject.toml`. Nothing is published. |

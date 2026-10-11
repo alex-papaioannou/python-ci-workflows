@@ -257,8 +257,13 @@ class WorkflowTests(StepHarness, unittest.TestCase):
         self.assertNotEqual(low.returncode, 0)
         self.assertIn("below the required 100%", low.stderr)
         env["COVERAGE_FAIL_UNDER"] = "50"
-        ok = self.execute(files, env)
-        self.assertEqual(ok.returncode, 0, ok.stderr)
+        with tempfile.TemporaryDirectory() as out:
+            summary = Path(out) / "summary.md"
+            ok = self.execute(files, {**env, "GITHUB_STEP_SUMMARY": str(summary)})
+            self.assertEqual(ok.returncode, 0, ok.stderr)
+            text = summary.read_text(encoding="utf-8")
+            self.assertIn("#### Coverage: 88.9%", text)
+            self.assertRegex(text, r"\| lib.py +\| +4 \| +1 \| +75% \| +6 \|")
         for value in ("101", "-1", "most"):
             invalid = self.execute(
                 {"tests/test_ok.py": ""},
