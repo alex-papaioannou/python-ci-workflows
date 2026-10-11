@@ -249,3 +249,25 @@ class WorkflowTests(unittest.TestCase):
                 step="Validate inputs",
             )
             self.assertNotEqual(invalid.returncode, 0, value)
+
+    def test_package_build_requires_pyproject(self):
+        result = self.execute(
+            {"tests/test_ok.py": ""}, {"BUILD_PACKAGE": "true"}, step="Validate inputs"
+        )
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("pyproject.toml", result.stderr)
+
+    def test_package_build_and_metadata_check(self):
+        pyproject = (
+            '[build-system]\nrequires = ["flit_core>=3.9,<4"]\nbuild-backend = "flit_core.buildapi"\n\n'
+            '[project]\nname = "fixture-pkg"\nversion = "1.0"\ndescription = "Fixture"\n'
+            'readme = "README.md"\n'
+        )
+        files = {
+            "pyproject.toml": pyproject,
+            "README.md": "Fixture\n",
+            "fixture_pkg/__init__.py": "",
+        }
+        result = self.execute(files, step="Build and check package")
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn("PASSED", result.stdout)

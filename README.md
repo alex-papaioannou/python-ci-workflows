@@ -68,3 +68,5 @@ Set `ruff-version` (for example `"0.17.0"`) to run `ruff check` and `ruff format
 Set `mypy-version` (for example `"2.4.0"`) to type-check `lint-paths` with mypy on every Python version in the matrix. mypy reads `[tool.mypy]` from the project's `pyproject.toml`; install third-party stubs through `requirements-file`.
 
 Set `coverage-version` (for example `"7.16.2"`) to measure the test run with coverage.py. The job prints a report, uploads `coverage.xml` as the `coverage-<python version>` artifact, and fails when the total falls below `coverage-fail-under` (default 0). Configure omissions in `[tool.coverage]`.
+
+Set `build-package: true` to build an sdist and wheel with `python -m build` and validate their metadata with `twine check --strict`, once per run on the first matrix Python version. It requires `pyproject.toml` in `working-directory`. Nothing is published.
