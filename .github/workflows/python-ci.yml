@@ -126,6 +126,7 @@ jobs:
       cancel-in-progress: ${{ inputs.cancel-in-progress }}
     defaults:
       run:
+        shell: bash
         working-directory: ${{ inputs.working-directory }}
     env:
       PYTHONWARNINGS: ${{ inputs.warnings-as-errors && 'error' || 'default' }}
@@ -146,8 +147,9 @@ jobs:
           allow-prereleases: ${{ inputs.allow-prereleases }}
           cache: ${{ inputs.requirements-file != '' && 'pip' || '' }}
           cache-dependency-path: ${{ inputs.requirements-file != '' && format('{0}/{1}', inputs.working-directory, inputs.requirements-file) || '' }}
+      - name: Load step scripts
+        uses: $/.github/actions/python-ci
       - name: Validate inputs
-        shell: python
         env:
           TEST_DIRECTORY: ${{ inputs.test-directory }}
           TEST_PATTERN: ${{ inputs.test-pattern }}
@@ -164,254 +166,50 @@ jobs:
           COVERAGE_FAIL_UNDER: ${{ inputs.coverage-fail-under }}
           BUILD_PACKAGE: ${{ inputs.build-package }}
           JUNIT_FILE: ${{ inputs.junit-file }}
-        run: |
-          import json
-          import os
-          from pathlib import Path
-          import re
-          
-          def inside(value):
-              path = Path(value).resolve()
-              root = Path(os.environ.get('GITHUB_WORKSPACE', os.getcwd())).resolve()
-              if not path.is_relative_to(root):
-                  raise SystemExit(f'Path is outside the checkout: {value}')
-              return path
-          
-          for key in ('TEST_DIRECTORY', 'TOP_LEVEL_DIRECTORY'):
-              value = os.environ.get(key)
-              if value and not inside(value).is_dir():
-                  raise SystemExit(f'{key} must name an existing directory')
-          requirements = os.environ.get('REQUIREMENTS_FILE')
-          if requirements and not inside(requirements).is_file():
-              raise SystemExit('requirements-file must name an existing file')
-          paths = json.loads(os.environ.get('COMPILE_PATHS', '["."]'))
-          if not isinstance(paths, list) or not paths or any(not isinstance(p, str) or not p for p in paths):
-              raise SystemExit('compile-paths must be a nonempty JSON array of path strings')
-          for path in paths:
-              if not inside(path).exists():
-                  raise SystemExit(f'Compilation target does not exist: {path}')
-          lint_paths = json.loads(os.environ.get('LINT_PATHS', '["."]'))
-          if not isinstance(lint_paths, list) or not lint_paths or any(not isinstance(p, str) or not p for p in lint_paths):
-              raise SystemExit('lint-paths must be a nonempty JSON array of path strings')
-          for path in lint_paths:
-              if not inside(path).exists():
-                  raise SystemExit(f'Lint target does not exist: {path}')
-          if not re.fullmatch(r'|\d+(\.\d+){0,2}', os.environ.get('RUFF_VERSION', '')):
-              raise SystemExit('ruff-version must be empty or a version such as 0.6.9')
-          if not re.fullmatch(r'|\d+(\.\d+){0,2}', os.environ.get('MYPY_VERSION', '')):
-              raise SystemExit('mypy-version must be empty or a version such as 1.11.2')
-          if not re.fullmatch(r'|\d+(\.\d+){0,2}', os.environ.get('COVERAGE_VERSION', '')):
-              raise SystemExit('coverage-version must be empty or a version such as 7.6.1')
-          try:
-              fail_under = float(os.environ.get('COVERAGE_FAIL_UNDER', '0'))
-          except ValueError:
-              fail_under = -1
-          if not 0 <= fail_under <= 100:
-              raise SystemExit('coverage-fail-under must be a number from 0 to 100')
-          if os.environ.get('JUNIT_FILE'):
-              inside(os.environ['JUNIT_FILE'])
-          if os.environ.get('BUILD_PACKAGE', 'false').lower() == 'true' and not Path('pyproject.toml').is_file():
-              raise SystemExit('build-package requires pyproject.toml in working-directory')
-          if os.environ.get('TEST_VERBOSITY', '2') not in ('0', '1', '2'):
-              raise SystemExit('test-verbosity must be 0, 1, or 2')
-          if os.environ.get('TEST_FAIL_FAST', 'false').lower() not in ('true', 'false'):
-              raise SystemExit('test-fail-fast must be boolean')
-          pattern = os.environ.get('TEST_PATTERN', 'test*.py')
-          if not pattern or '/' in pattern or '\\' in pattern:
-              raise SystemExit('test-pattern must be a nonempty filename glob')
-          re.compile(os.environ.get('COMPILE_EXCLUDE', ''))
+        run: python "$PYTHON_CI_STEPS" validate
       - name: Install dependencies
         if: inputs.requirements-file != ''
-        shell: python
         env:
           REQUIREMENTS_FILE: ${{ inputs.requirements-file }}
           REQUIRE_HASHES: ${{ inputs.require-hashes }}
-        run: |
-          import os
-          import subprocess
-          import sys
-          command = [sys.executable, '-m', 'pip', 'install', '--disable-pip-version-check', '-r', os.environ['REQUIREMENTS_FILE']]
-          if os.environ.get('REQUIRE_HASHES', 'true').lower() == 'true':
-              command.insert(4, '--require-hashes')
-          raise SystemExit(subprocess.run(command).returncode)
+        run: python "$PYTHON_CI_STEPS" install
       - name: Lint with Ruff
         if: inputs.ruff-version != '' && matrix.python-version == fromJSON(inputs.python-versions)[0] && matrix.os == fromJSON(inputs.operating-systems)[0]
-        shell: python
         env:
           RUFF_VERSION: ${{ inputs.ruff-version }}
           RUFF_FORMAT: ${{ inputs.ruff-format }}
           LINT_PATHS: ${{ inputs.lint-paths }}
-        run: |
-          import json
-          import os
-          import subprocess
-          import sys
-          def run(*args):
-              return subprocess.run([sys.executable, *args]).returncode
-          if run('-m', 'pip', 'install', '--disable-pip-version-check', '-q', 'ruff==' + os.environ['RUFF_VERSION']):
-              raise SystemExit('Could not install Ruff')
-          paths = json.loads(os.environ.get('LINT_PATHS', '["."]'))
-          failed = run('-m', 'ruff', 'check', '--output-format=github', *paths)
-          if os.environ.get('RUFF_FORMAT', 'true').lower() == 'true':
-              failed = run('-m', 'ruff', 'format', '--check', '--diff', *paths) or failed
-          raise SystemExit(1 if failed else 0)
+        run: python "$PYTHON_CI_STEPS" ruff
       - name: Type-check with mypy
         if: inputs.mypy-version != ''
-        shell: python
         env:
           MYPY_VERSION: ${{ inputs.mypy-version }}
           LINT_PATHS: ${{ inputs.lint-paths }}
-        run: |
-          import json
-          import os
-          import subprocess
-          import sys
-          def run(*args):
-              return subprocess.run([sys.executable, *args]).returncode
-          if run('-m', 'pip', 'install', '--disable-pip-version-check', '-q', 'mypy==' + os.environ['MYPY_VERSION']):
-              raise SystemExit('Could not install mypy')
-          paths = json.loads(os.environ.get('LINT_PATHS', '["."]'))
-          raise SystemExit(run('-m', 'mypy', '--python-version', '{}.{}'.format(*sys.version_info), *paths))
+        run: python "$PYTHON_CI_STEPS" mypy
       - name: Check Python syntax
-        shell: python
         env:
-          TEST_DIRECTORY: ${{ inputs.test-directory }}
-          TEST_PATTERN: ${{ inputs.test-pattern }}
-          TOP_LEVEL_DIRECTORY: ${{ inputs.top-level-directory }}
-          TEST_VERBOSITY: ${{ inputs.test-verbosity }}
-          TEST_FAIL_FAST: ${{ inputs.test-fail-fast }}
           COMPILE_PATHS: ${{ inputs.compile-paths }}
           COMPILE_EXCLUDE: ${{ inputs.compile-exclude }}
-        run: |
-          import compileall
-          import json
-          import os
-          import re
-          from pathlib import Path
-          paths = json.loads(os.environ.get('COMPILE_PATHS', '["."]'))
-          exclude = re.compile(os.environ["COMPILE_EXCLUDE"]) if os.environ.get("COMPILE_EXCLUDE") else None
-          ok = True
-          for path in paths:
-              if not Path(path).exists():
-                  raise SystemExit(f'Compilation target does not exist: {path}')
-              check = compileall.compile_dir if Path(path).is_dir() else compileall.compile_file
-              ok = check(path, quiet=1, rx=exclude) and ok
-          raise SystemExit(0 if ok else 1)
+        run: python "$PYTHON_CI_STEPS" compile
       - name: Build and check package
         if: inputs.build-package && matrix.python-version == fromJSON(inputs.python-versions)[0] && matrix.os == fromJSON(inputs.operating-systems)[0]
-        shell: python
-        run: |
-          import glob
-          import os
-          import subprocess
-          import sys
-          import tempfile
-          def run(*args):
-              return subprocess.run([sys.executable, *args]).returncode
-          tools = ['build==1.6.1', 'twine==7.0.0']
-          if run('-m', 'pip', 'install', '--disable-pip-version-check', '-q', *tools):
-              raise SystemExit('Could not install build tools')
-          outdir = tempfile.mkdtemp(prefix='dist-')
-          if run('-m', 'build', '--outdir', outdir, '.'):
-              raise SystemExit('Package build failed')
-          raise SystemExit(run('-m', 'twine', 'check', '--strict', *glob.glob(os.path.join(outdir, '*'))))
+        run: python "$PYTHON_CI_STEPS" build
       - name: Install coverage
         if: inputs.coverage-version != ''
-        shell: python
         env:
           COVERAGE_VERSION: ${{ inputs.coverage-version }}
-        run: |
-          import os
-          import subprocess
-          import sys
-          command = [sys.executable, '-m', 'pip', 'install', '--disable-pip-version-check', '-q', 'coverage==' + os.environ['COVERAGE_VERSION']]
-          raise SystemExit(subprocess.run(command).returncode)
+        run: python "$PYTHON_CI_STEPS" install-coverage
       - name: Run tests and reject empty test suites
-        shell: python
         env:
           TEST_DIRECTORY: ${{ inputs.test-directory }}
           TEST_PATTERN: ${{ inputs.test-pattern }}
           TOP_LEVEL_DIRECTORY: ${{ inputs.top-level-directory }}
           TEST_VERBOSITY: ${{ inputs.test-verbosity }}
           TEST_FAIL_FAST: ${{ inputs.test-fail-fast }}
-          COMPILE_PATHS: ${{ inputs.compile-paths }}
-          COMPILE_EXCLUDE: ${{ inputs.compile-exclude }}
           COVERAGE_VERSION: ${{ inputs.coverage-version }}
           COVERAGE_FAIL_UNDER: ${{ inputs.coverage-fail-under }}
           JUNIT_FILE: ${{ inputs.junit-file }}
-        run: |
-          import os
-          import sys
-          import unittest
-          sys.path.insert(0, os.getcwd())
-          cov = None
-          if os.environ.get('COVERAGE_VERSION'):
-              import coverage
-              cov = coverage.Coverage(data_file='.coverage', source=[os.getcwd()])
-              cov.start()
-          suite = unittest.defaultTestLoader.discover(os.environ.get('TEST_DIRECTORY', 'tests'), pattern=os.environ.get('TEST_PATTERN', 'test*.py'), top_level_dir=os.environ.get('TOP_LEVEL_DIRECTORY') or None)
-          if suite.countTestCases() == 0:
-              raise SystemExit('No tests discovered')
-          import time
-          import xml.etree.ElementTree as ET
-          records = []
-          class RecordingResult(unittest.TextTestResult):
-              def startTest(self, test):
-                  self._started = time.perf_counter()
-                  super().startTest(test)
-              def _record(self, test, outcome, detail=''):
-                  elapsed = time.perf_counter() - getattr(self, '_started', time.perf_counter())
-                  records.append((test, outcome, detail, elapsed))
-              def addSuccess(self, test):
-                  super().addSuccess(test)
-                  self._record(test, 'passed')
-              def addFailure(self, test, err):
-                  super().addFailure(test, err)
-                  self._record(test, 'failure', self.failures[-1][1])
-              def addError(self, test, err):
-                  super().addError(test, err)
-                  self._record(test, 'error', self.errors[-1][1])
-              def addSkip(self, test, reason):
-                  super().addSkip(test, reason)
-                  self._record(test, 'skipped', reason)
-              def addExpectedFailure(self, test, err):
-                  super().addExpectedFailure(test, err)
-                  self._record(test, 'passed')
-              def addUnexpectedSuccess(self, test):
-                  super().addUnexpectedSuccess(test)
-                  self._record(test, 'failure', 'Unexpected success')
-          runner = unittest.TextTestRunner(verbosity=int(os.environ.get("TEST_VERBOSITY", "2")), failfast=os.environ.get("TEST_FAIL_FAST", "false").lower() == "true", resultclass=RecordingResult)
-          result = runner.run(suite)
-          counts = {name: sum(1 for r in records if r[1] == name) for name in ('passed', 'failure', 'error', 'skipped')}
-          summary_path = os.environ.get('GITHUB_STEP_SUMMARY')
-          if summary_path:
-              with open(summary_path, 'a', encoding='utf-8') as summary:
-                  summary.write(f"### Tests on Python {sys.version.split()[0]} ({sys.platform})\n\n")
-                  summary.write('| Passed | Failed | Errors | Skipped |\n| --- | --- | --- | --- |\n')
-                  summary.write(f"| {counts['passed']} | {counts['failure']} | {counts['error']} | {counts['skipped']} |\n\n")
-                  for test, outcome, _, _ in records:
-                      if outcome in ('failure', 'error'):
-                          summary.write(f'- {outcome}: `{test.id()}`\n')
-          junit = os.environ.get('JUNIT_FILE')
-          if junit:
-              suite_element = ET.Element('testsuite', name='unittest', tests=str(len(records)), failures=str(counts['failure']), errors=str(counts['error']), skipped=str(counts['skipped']), time=f'{sum(r[3] for r in records):.3f}')
-              for test, outcome, detail, elapsed in records:
-                  classname, _, name = test.id().rpartition('.')
-                  case = ET.SubElement(suite_element, 'testcase', classname=classname, name=name, time=f'{elapsed:.3f}')
-                  if outcome != 'passed':
-                      ET.SubElement(case, outcome, message=str(detail).strip().splitlines()[-1] if str(detail).strip() else outcome).text = str(detail)
-              os.makedirs(os.path.dirname(os.path.abspath(junit)), exist_ok=True)
-              ET.ElementTree(suite_element).write(junit, encoding='utf-8', xml_declaration=True)
-          if cov is not None:
-              cov.stop()
-              cov.save()
-              total = cov.report(skip_empty=True)
-              cov.xml_report(outfile='coverage.xml')
-              minimum = float(os.environ.get('COVERAGE_FAIL_UNDER') or 0)
-              if total < minimum:
-                  print(f'Coverage {total:.2f}% is below the required {minimum:g}%', file=sys.stderr)
-                  sys.exit(1)
-          sys.exit(0 if result.wasSuccessful() else 1)
+        run: python "$PYTHON_CI_STEPS" test
       - name: Upload JUnit report
         if: always() && inputs.junit-file != ''
         uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
@@ -434,16 +232,14 @@ jobs:
     timeout-minutes: 5
     outputs:
       result: ${{ steps.result.outputs.result }}
+    defaults:
+      run:
+        shell: bash
     steps:
+      - name: Load step scripts
+        uses: $/.github/actions/python-ci
       - name: Report matrix result
         id: result
-        shell: python
         env:
           MATRIX_RESULT: ${{ needs.test.result }}
-        run: |
-          import os
-          result = os.environ['MATRIX_RESULT']
-          with open(os.environ['GITHUB_OUTPUT'], 'a', encoding='utf-8') as output:
-              output.write(f'result={result}\n')
-          print(f'Matrix result: {result}')
-          raise SystemExit(0 if result == 'success' else 1)
+        run: python "$PYTHON_CI_STEPS" result

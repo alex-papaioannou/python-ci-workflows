@@ -1,0 +1,14 @@
+name: Python CI step scripts
+description: Exposes the step scripts that ship with the reusable Python CI workflow.
+runs:
+  using: composite
+  steps:
+    - name: Locate step scripts
+      shell: python
+      env:
+        SCRIPTS: ${{ github.action_path }}
+      run: |
+        import os
+        from pathlib import Path
+        with open(os.environ['GITHUB_ENV'], 'a', encoding='utf-8') as env:
+            env.write(f"PYTHON_CI_STEPS={Path(os.environ['SCRIPTS']) / 'steps.py'}\n")

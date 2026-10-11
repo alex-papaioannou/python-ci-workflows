@@ -1,0 +1,5 @@
+paths:
+  .github/workflows/python-ci.yml:
+    ignore:
+      # actionlint does not yet understand same-repository "$/" action references.
+      - 'specifying action "\$/.+" in invalid format because ref is missing'
