@@ -31,6 +31,10 @@ First tagged release.
   parallelism, compile targets and exclusions, warnings-as-errors, and hash seed.
 - Early validation of all inputs.
 
+### Testing
+
+- Example consumer projects exercised end to end on every pull request.
+
 ### Security
 
 - Third-party actions pinned to commit SHAs, with Dependabot updates.
