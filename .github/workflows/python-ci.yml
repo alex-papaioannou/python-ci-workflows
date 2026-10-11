@@ -1,6 +1,10 @@
 name: Reusable Python CI
 on:
   workflow_call:
+    outputs:
+      result:
+        description: "Overall matrix result: success, failure, or cancelled"
+        value: ${{ jobs.result.outputs.result }}
     inputs:
       python-versions:
         description: "JSON array of Python versions"
@@ -422,3 +426,24 @@ jobs:
           name: coverage-${{ matrix.os }}-${{ matrix.python-version }}
           path: ${{ inputs.working-directory }}/coverage.xml
           if-no-files-found: ignore
+  result:
+    name: result
+    needs: test
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      result: ${{ steps.result.outputs.result }}
+    steps:
+      - name: Report matrix result
+        id: result
+        shell: python
+        env:
+          MATRIX_RESULT: ${{ needs.test.result }}
+        run: |
+          import os
+          result = os.environ['MATRIX_RESULT']
+          with open(os.environ['GITHUB_OUTPUT'], 'a', encoding='utf-8') as output:
+              output.write(f'result={result}\n')
+          print(f'Matrix result: {result}')
+          raise SystemExit(0 if result == 'success' else 1)
