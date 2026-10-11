@@ -2,7 +2,7 @@
 
 A reusable GitHub Actions workflow for Python projects. By default it checks syntax,
 discovers and runs `unittest` tests, rejects empty test suites, and runs on Python
-3.11, 3.12 and 3.13. It needs no secrets. Dependency installation, linting, type
+3.11 through 3.14. It needs no secrets. Dependency installation, linting, type
 checking, coverage and package builds are all optional.
 
 ## Quick start
@@ -26,7 +26,7 @@ jobs:
   python:
     uses: alex-papaioannou/python-ci-workflows/.github/workflows/python-ci.yml@v1
     with:
-      python-versions: '["3.11", "3.12", "3.13"]'
+      python-versions: '["3.11", "3.12", "3.13", "3.14"]'
       operating-systems: '["ubuntu-latest", "windows-latest"]'
       requirements-file: requirements-dev.txt
       ruff-version: "0.17.0"
@@ -56,7 +56,7 @@ inside the checkout. JSON arrays are passed as strings.
 
 | Input | Type | Default | Description |
 | --- | --- | --- | --- |
-| `python-versions` | string | `["3.11", "3.12", "3.13"]` | JSON array of Python versions. |
+| `python-versions` | string | `["3.11", "3.12", "3.13", "3.14"]` | JSON array of Python versions. |
 | `operating-systems` | string | `["ubuntu-latest"]` | JSON array of runner labels. Every step runs through Python, so Windows and macOS need no shell changes. |
 | `allow-prereleases` | boolean | `false` | Let `setup-python` install alpha, beta and release-candidate versions. |
 | `experimental-python-versions` | string | `[]` | JSON array of matrix versions whose failures do not fail the run. |

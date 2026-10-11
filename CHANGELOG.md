@@ -9,6 +9,7 @@ First tagged release.
 
 ### Added
 
+- Python 3.14 in the default version matrix.
 - Pip requirements installation, hash-checked by default, with caching.
 - Optional Ruff lint and format checks.
 - Optional mypy type checking.
