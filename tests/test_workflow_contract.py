@@ -3,6 +3,7 @@
 import importlib.util
 import os
 import re
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -524,3 +525,64 @@ class ProjectInstallTests(StepHarness, unittest.TestCase):
                 text=True,
             )
             self.assertEqual(check.stdout.strip(), "1.0", check.stderr)
+
+
+UV = {"INSTALLER": "uv", "UV_VERSION": "0.11.32"}
+
+
+class UvInstallerTests(StepHarness, unittest.TestCase):
+    def install_into_venv(self, files, env):
+        venv = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, venv, ignore_errors=True)
+        subprocess.run([sys.executable, "-m", "venv", venv], check=True)
+        python = Path(venv) / (
+            "Scripts/python.exe" if os.name == "nt" else "bin/python"
+        )
+        result = self.execute(
+            files,
+            {**UV, **env},
+            step="Install dependencies",
+            executable=str(python),
+        )
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        return python
+
+    def test_uv_installs_from_uv_lock(self):
+        fixture = Path(__file__).parent / "fixtures/uv-project"
+        files = {
+            name: (fixture / name).read_text() for name in ("pyproject.toml", "uv.lock")
+        }
+        python = self.install_into_venv(files, {"REQUIREMENTS_FILE": "uv.lock"})
+        check = subprocess.run([str(python), "-c", "import iniconfig"], check=False)
+        self.assertEqual(check.returncode, 0)
+
+    def test_uv_installs_hashed_requirements(self):
+        requirements = (
+            "iniconfig==2.1.0 \\\n"
+            "    --hash=sha256:9deba5723312380e77435581c6bf4935c94cbfab9b1ed33ef8d238ea168eb760\n"
+        )
+        python = self.install_into_venv(
+            {"requirements.txt": requirements},
+            {"REQUIREMENTS_FILE": "requirements.txt"},
+        )
+        check = subprocess.run([str(python), "-c", "import iniconfig"], check=False)
+        self.assertEqual(check.returncode, 0)
+
+    def test_installer_inputs_validated(self):
+        cases = (
+            ({"INSTALLER": "conda"}, {}),
+            ({"INSTALLER": "uv", "UV_VERSION": ""}, {}),
+            ({"REQUIREMENTS_FILE": "uv.lock"}, {"uv.lock": ""}),
+            ({"REQUIREMENTS_FILE": "pylock.toml"}, {"pylock.toml": ""}),
+        )
+        for env, files in cases:
+            result = self.execute(
+                {"tests/test_ok.py": "", **files}, env, step="Validate inputs"
+            )
+            self.assertNotEqual(result.returncode, 0, env)
+        ok = self.execute(
+            {"tests/test_ok.py": "", "uv.lock": ""},
+            {**UV, "REQUIREMENTS_FILE": "uv.lock", "PROJECT_EXTRAS": "test"},
+            step="Validate inputs",
+        )
+        self.assertEqual(ok.returncode, 0, ok.stderr)

@@ -9,6 +9,7 @@ First tagged release.
 
 ### Added
 
+- uv as an alternative installer, with `uv.lock` and `pylock.toml` support (`installer`, `uv-version`).
 - Editable installation of the project itself with optional extras (`install-project`, `project-extras`).
 - pytest as an alternative test runner (`test-runner`, `pytest-version`, `pytest-args`).
 - Python 3.14 in the default version matrix.
