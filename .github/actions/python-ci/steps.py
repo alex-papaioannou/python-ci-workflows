@@ -591,8 +591,20 @@ def test() -> int:
     if cov is not None:
         cov.stop()
         cov.save()
-        total = cov.report(skip_empty=True)
+        total = cov.report(skip_empty=True, show_missing=True)
         cov.xml_report(outfile="coverage.xml")
+        if env("GITHUB_STEP_SUMMARY"):
+            with open(env("GITHUB_STEP_SUMMARY"), "a", encoding="utf-8") as summary:
+                summary.write(
+                    f"#### Coverage: {total:.1f}%\n\n<details><summary>Per-file coverage</summary>\n\n"
+                )
+                cov.report(
+                    skip_empty=True,
+                    show_missing=True,
+                    output_format="markdown",
+                    file=summary,
+                )
+                summary.write("\n</details>\n\n")
         minimum = float(env("COVERAGE_FAIL_UNDER") or 0)
         if total < minimum:
             print(
