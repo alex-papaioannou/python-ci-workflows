@@ -116,6 +116,7 @@ inside the checkout. JSON arrays are passed as strings.
 | --- | --- | --- | --- |
 | `coverage-version` | string | `""` | Measure tests with this coverage.py version and upload `coverage.xml` as `coverage-<os>-<python>`. |
 | `coverage-fail-under` | number | `0` | Fail when total coverage is below this percentage. |
+| `test-wheel` | boolean | `false` | After building, install the wheel (with `project-extras` and a `.txt` `requirements-file`) in a fresh virtual environment and run only a copy of the tests against it. This catches files missing from the wheel and broken package discovery. Requires `build-package`. |
 | `build-package` | boolean | `false` | Build an sdist and wheel and run `twine check --strict`, once per run. Requires `pyproject.toml`. Nothing is published. |
 
 ## Outputs and required checks
@@ -151,7 +152,7 @@ are skipped.
 4. Install requirements and the project, then audit them.
 5. Run Ruff, then mypy.
 6. Byte-compile `compile-paths`.
-7. Build and check the package.
+7. Build and check the package, and optionally test the built wheel.
 8. Run unittest or pytest, optionally under coverage, and write reports.
 9. Upload JUnit and coverage artifacts, even when tests fail.
 

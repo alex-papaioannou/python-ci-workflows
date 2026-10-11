@@ -128,6 +128,8 @@ def validate() -> int:
         raise SystemExit(
             "install-project requires pyproject.toml or setup.py in working-directory"
         )
+    if flag("TEST_WHEEL") and not flag("BUILD_PACKAGE"):
+        raise SystemExit("test-wheel requires build-package: true")
     if flag("BUILD_PACKAGE") and not Path("pyproject.toml").is_file():
         raise SystemExit("build-package requires pyproject.toml in working-directory")
     if env("TEST_VERBOSITY", "2") not in ("0", "1", "2"):
@@ -342,9 +344,73 @@ def build() -> int:
     outdir = tempfile.mkdtemp(prefix="dist-")
     if python("-m", "build", "--outdir", outdir, "."):
         raise SystemExit("Package build failed")
-    return python(
+    if python(
         "-m", "twine", "check", "--strict", *glob.glob(os.path.join(outdir, "*"))
+    ):
+        return 1
+    return test_wheel(outdir) if flag("TEST_WHEEL") else 0
+
+
+def test_wheel(outdir: str) -> int:
+    """Run the test suite against the built wheel in a clean virtual environment."""
+    import shutil
+    import venv
+
+    wheels = glob.glob(os.path.join(outdir, "*.whl"))
+    if len(wheels) != 1:
+        raise SystemExit(f"Expected one wheel in the build output, found {len(wheels)}")
+    workdir = tempfile.mkdtemp(prefix="wheel-test-")
+    venv.EnvBuilder(with_pip=True).create(os.path.join(workdir, "venv"))
+    interpreter = os.path.join(
+        workdir, "venv", "Scripts" if os.name == "nt" else "bin", "python"
     )
+
+    def run(*args: str, cwd: str | None = None) -> int:
+        return subprocess.run([interpreter, *args], check=False, cwd=cwd).returncode
+
+    def install(*args: str) -> int:
+        return run("-m", "pip", "install", "--disable-pip-version-check", *args)
+
+    requirements = env("REQUIREMENTS_FILE")
+    if requirements and Path(requirements).suffix == ".txt":
+        hashes = ["--require-hashes"] if flag("REQUIRE_HASHES", default=True) else []
+        if install(*hashes, "-r", requirements):
+            return 1
+    target = wheels[0] + (f"[{','.join(extras())}]" if extras() else "")
+    if install(target):
+        raise SystemExit("Could not install the built wheel")
+    pytest_runner = env("TEST_RUNNER", "unittest") == "pytest"
+    if pytest_runner and install("-q", "pytest==" + env("PYTEST_VERSION")):
+        raise SystemExit("Could not install pytest for the wheel tests")
+    # Copy only the tests, so imports resolve to the installed wheel, not the source tree.
+    tests = os.path.join(workdir, "project", env("TEST_DIRECTORY", "tests"))
+    shutil.copytree(env("TEST_DIRECTORY", "tests"), tests)
+    cwd = os.path.join(workdir, "project")
+    pattern = env("TEST_PATTERN", "test*.py")
+    print(f"Testing {os.path.basename(wheels[0])} in a clean environment")
+    if pytest_runner:
+        code = run(
+            "-m",
+            "pytest",
+            env("TEST_DIRECTORY", "tests"),
+            "-o",
+            f"python_files={pattern}",
+            "-p",
+            "no:cacheprovider",
+            cwd=cwd,
+        )
+    else:
+        code = run(
+            "-m",
+            "unittest",
+            "discover",
+            "-s",
+            env("TEST_DIRECTORY", "tests"),
+            "-p",
+            pattern,
+            cwd=cwd,
+        )
+    return code
 
 
 def install_test_tools() -> int:

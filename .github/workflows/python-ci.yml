@@ -150,6 +150,10 @@ on:
         description: "JSON array of vulnerability IDs for pip-audit to ignore"
         type: string
         default: "[]"
+      test-wheel:
+        description: "Also run the tests against the built wheel in a clean environment"
+        type: boolean
+        default: false
 permissions:
   contents: read
 jobs:
@@ -211,6 +215,7 @@ jobs:
           UV_VERSION: ${{ inputs.uv-version }}
           AUDIT_VERSION: ${{ inputs.audit-version }}
           AUDIT_IGNORE: ${{ inputs.audit-ignore }}
+          TEST_WHEEL: ${{ inputs.test-wheel }}
         run: python "$PYTHON_CI_STEPS" validate
       - name: Install dependencies
         if: inputs.requirements-file != '' || inputs.install-project
@@ -249,6 +254,15 @@ jobs:
         run: python "$PYTHON_CI_STEPS" compile
       - name: Build and check package
         if: inputs.build-package && matrix.python-version == fromJSON(inputs.python-versions)[0] && matrix.os == fromJSON(inputs.operating-systems)[0]
+        env:
+          TEST_WHEEL: ${{ inputs.test-wheel }}
+          REQUIREMENTS_FILE: ${{ inputs.requirements-file }}
+          REQUIRE_HASHES: ${{ inputs.require-hashes }}
+          PROJECT_EXTRAS: ${{ inputs.project-extras }}
+          TEST_RUNNER: ${{ inputs.test-runner }}
+          PYTEST_VERSION: ${{ inputs.pytest-version }}
+          TEST_DIRECTORY: ${{ inputs.test-directory }}
+          TEST_PATTERN: ${{ inputs.test-pattern }}
         run: python "$PYTHON_CI_STEPS" build
       - name: Install test tools
         if: inputs.coverage-version != '' || inputs.test-runner == 'pytest'
