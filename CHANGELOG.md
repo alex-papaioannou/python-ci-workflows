@@ -9,6 +9,7 @@ First tagged release.
 
 ### Added
 
+- Doctest collection (`doctest-paths`) and the ten slowest tests in the job summary.
 - Testing the built wheel in a clean environment (`test-wheel`).
 - Optional dependency vulnerability scanning with pip-audit (`audit-version`, `audit-ignore`).
 - uv as an alternative installer, with `uv.lock` and `pylock.toml` support (`installer`, `uv-version`).

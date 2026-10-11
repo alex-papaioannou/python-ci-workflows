@@ -95,6 +95,7 @@ inside the checkout. JSON arrays are passed as strings.
 | `top-level-directory` | string | `""` | unittest import root for package-based layouts. Ignored by pytest, which reads `rootdir` from its own configuration. |
 | `test-verbosity` | number | `2` | Output verbosity 0, 1 or 2. For pytest these mean `-q`, the default and `-v`. |
 | `test-fail-fast` | boolean | `false` | Stop after the first failing test. Other matrix jobs still finish. |
+| `doctest-paths` | string | `[]` | JSON array of modules or package directories whose docstring examples also run as tests, through `doctest` with unittest or `--doctest-modules` with pytest. |
 | `warnings-as-errors` | boolean | `false` | Set `PYTHONWARNINGS=error` for every step. |
 | `hash-seed` | string | `0` | `PYTHONHASHSEED`: `random` or an integer from 0 to 4294967295. |
 | `junit-file` | string | `""` | Write a JUnit XML report here and upload it as `junit-<os>-<python>`. |
@@ -137,8 +138,8 @@ jobs:
       - run: echo "CI finished with ${{ needs.python.outputs.result }}"
 ```
 
-Every test job also appends a pass, fail, error and skip table and the IDs of
-failing tests to the job summary.
+Every test job also appends a pass, fail, error and skip table, the IDs of
+failing tests, and the ten slowest tests to the job summary.
 
 ## How it runs
 

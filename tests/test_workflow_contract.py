@@ -683,3 +683,52 @@ class WheelTests(StepHarness, unittest.TestCase):
             {"tests/test_ok.py": ""}, {"TEST_WHEEL": "true"}, step="Validate inputs"
         )
         self.assertNotEqual(result.returncode, 0)
+
+
+class DoctestAndTimingTests(StepHarness, unittest.TestCase):
+    MODULE = (
+        'def double(x):\n    """\n    >>> double(2)\n    4\n    """\n    return x * 2\n'
+    )
+
+    def test_doctests_run_with_unittest(self):
+        files = {
+            "pkg/__init__.py": "",
+            "pkg/maths.py": self.MODULE,
+            "tests/test_none.py": "",
+        }
+        ok = self.execute(files, {"DOCTEST_PATHS": '["pkg"]'})
+        self.assertEqual(ok.returncode, 0, ok.stderr)
+        self.assertIn("Ran 1 test", ok.stderr)
+        files["pkg/maths.py"] = self.MODULE.replace("    4\n", "    5\n")
+        bad = self.execute(files, {"DOCTEST_PATHS": '["pkg"]'})
+        self.assertNotEqual(bad.returncode, 0)
+
+    @unittest.skipUnless(importlib.util.find_spec("pytest"), "pytest is not installed")
+    def test_doctests_run_with_pytest(self):
+        files = {
+            "maths.py": self.MODULE.replace("    4\n", "    5\n"),
+            "tests/test_ok.py": "def test_ok():\n    pass\n",
+        }
+        result = self.execute(files, {**PYTEST, "DOCTEST_PATHS": '["maths.py"]'})
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("maths.double", result.stdout)
+
+    def test_doctest_paths_validated(self):
+        result = self.execute(
+            {"tests/test_ok.py": ""},
+            {"DOCTEST_PATHS": '["missing"]'},
+            step="Validate inputs",
+        )
+        self.assertNotEqual(result.returncode, 0)
+
+    def test_summary_lists_slowest_tests(self):
+        tests = "import time, unittest\n\n\nclass T(unittest.TestCase):\n    def test_slow(self):\n        time.sleep(0.2)\n\n    def test_fast(self):\n        pass\n"
+        with tempfile.TemporaryDirectory() as out:
+            summary = Path(out) / "summary.md"
+            result = self.execute(
+                {"tests/test_t.py": tests}, {"GITHUB_STEP_SUMMARY": str(summary)}
+            )
+            self.assertEqual(result.returncode, 0, result.stderr)
+            text = summary.read_text(encoding="utf-8")
+            self.assertIn("2 slowest tests", text)
+            self.assertLess(text.index("test_slow"), text.index("test_fast"))

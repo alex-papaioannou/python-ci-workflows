@@ -154,6 +154,10 @@ on:
         description: "Also run the tests against the built wheel in a clean environment"
         type: boolean
         default: false
+      doctest-paths:
+        description: "JSON array of modules or directories whose docstring examples run as tests"
+        type: string
+        default: "[]"
 permissions:
   contents: read
 jobs:
@@ -216,6 +220,7 @@ jobs:
           AUDIT_VERSION: ${{ inputs.audit-version }}
           AUDIT_IGNORE: ${{ inputs.audit-ignore }}
           TEST_WHEEL: ${{ inputs.test-wheel }}
+          DOCTEST_PATHS: ${{ inputs.doctest-paths }}
         run: python "$PYTHON_CI_STEPS" validate
       - name: Install dependencies
         if: inputs.requirements-file != '' || inputs.install-project
@@ -283,6 +288,7 @@ jobs:
           JUNIT_FILE: ${{ inputs.junit-file }}
           TEST_RUNNER: ${{ inputs.test-runner }}
           PYTEST_ARGS: ${{ inputs.pytest-args }}
+          DOCTEST_PATHS: ${{ inputs.doctest-paths }}
         run: python "$PYTHON_CI_STEPS" test
       - name: Upload JUnit report
         if: always() && inputs.junit-file != ''

@@ -81,6 +81,8 @@ def validate() -> int:
         raise SystemExit("requirements-file must name an existing file")
     validate_path_list("COMPILE_PATHS", "compile-paths", "Compilation target")
     validate_path_list("LINT_PATHS", "lint-paths", "Lint target")
+    if env("DOCTEST_PATHS", "[]") != "[]":
+        validate_path_list("DOCTEST_PATHS", "doctest-paths", "Doctest target")
     for name, example in (("RUFF", "0.6.9"), ("MYPY", "1.11.2"), ("COVERAGE", "7.6.1")):
         if not VERSION.fullmatch(env(f"{name}_VERSION")):
             raise SystemExit(
@@ -466,7 +468,14 @@ def count(outcomes: list[str]) -> dict[str, int]:
     }
 
 
-def write_summary(counts: dict[str, int], failing: list[tuple[str, str]]) -> None:
+SLOWEST = 10
+
+
+def write_summary(
+    counts: dict[str, int],
+    failing: list[tuple[str, str]],
+    durations: list[tuple[str, float]],
+) -> None:
     summary_path = env("GITHUB_STEP_SUMMARY")
     if not summary_path:
         return
@@ -483,6 +492,16 @@ def write_summary(counts: dict[str, int], failing: list[tuple[str, str]]) -> Non
         summary.writelines(
             f"- {outcome}: `{test_id}`\n" for outcome, test_id in failing
         )
+        slowest = sorted(durations, key=lambda item: item[1], reverse=True)[:SLOWEST]
+        if slowest:
+            summary.write(
+                f"\n<details><summary>{len(slowest)} slowest tests</summary>\n\n"
+                "| Test | Seconds |\n| --- | ---: |\n"
+            )
+            summary.writelines(
+                f"| `{test_id}` | {secs:.2f} |\n" for test_id, secs in slowest
+            )
+            summary.write("\n</details>\n\n")
 
 
 def write_junit(path, records, counts) -> None:
@@ -508,12 +527,43 @@ def write_junit(path, records, counts) -> None:
     ET.ElementTree(suite).write(path, encoding="utf-8", xml_declaration=True)
 
 
+def module_names(paths: list[str]) -> list[str]:
+    """Translate files and directories under the working directory into module names."""
+    files: list[Path] = []
+    for path in map(Path, paths):
+        files.extend(sorted(path.rglob("*.py")) if path.is_dir() else [path])
+    names = []
+    for file in files:
+        parts = list(
+            file.resolve().relative_to(Path.cwd().resolve()).with_suffix("").parts
+        )
+        if parts[-1] == "__init__":
+            parts.pop()
+        if parts and all(part.isidentifier() for part in parts):
+            names.append(".".join(parts))
+    return names
+
+
+def doctest_suite() -> unittest.TestSuite:
+    import doctest
+    import importlib
+
+    suite = unittest.TestSuite()
+    for name in module_names(json.loads(env("DOCTEST_PATHS", "[]"))):
+        try:
+            suite.addTest(doctest.DocTestSuite(importlib.import_module(name)))
+        except ValueError:  # Python 3.9 and 3.10 reject modules without docstrings
+            continue
+    return suite
+
+
 def run_unittest() -> int:
     suite = unittest.defaultTestLoader.discover(
         env("TEST_DIRECTORY", "tests"),
         pattern=env("TEST_PATTERN", "test*.py"),
         top_level_dir=env("TOP_LEVEL_DIRECTORY") or None,
     )
+    suite.addTest(doctest_suite())
     if suite.countTestCases() == 0:
         raise SystemExit("No tests discovered")
     runner = unittest.TextTestRunner(
@@ -525,15 +575,19 @@ def run_unittest() -> int:
     records = RecordingResult.records
     counts = count([r[1] for r in records])
     write_summary(
-        counts, [(r[1], r[0].id()) for r in records if r[1] in ("failure", "error")]
+        counts,
+        [(r[1], r[0].id()) for r in records if r[1] in ("failure", "error")],
+        [(r[0].id(), r[3]) for r in records],
     )
     if env("JUNIT_FILE"):
         write_junit(env("JUNIT_FILE"), records, counts)
     return 0 if result.wasSuccessful() else 1
 
 
-def junit_outcomes(path: str) -> tuple[dict[str, int], list[tuple[str, str]]]:
-    outcomes, failing = [], []
+def junit_outcomes(
+    path: str,
+) -> tuple[dict[str, int], list[tuple[str, str]], list[tuple[str, float]]]:
+    outcomes, failing, durations = [], [], []
     for case in ET.parse(path).getroot().iter("testcase"):
         test_id = f"{case.get('classname')}.{case.get('name')}"
         outcome = next(
@@ -545,9 +599,10 @@ def junit_outcomes(path: str) -> tuple[dict[str, int], list[tuple[str, str]]]:
             "passed",
         )
         outcomes.append(outcome)
+        durations.append((test_id, float(case.get("time") or 0)))
         if outcome in ("failure", "error"):
             failing.append((outcome, test_id))
-    return count(outcomes), failing
+    return count(outcomes), failing, durations
 
 
 def run_pytest() -> int:
@@ -566,6 +621,8 @@ def run_pytest() -> int:
         f"--junitxml={report}",
         *verbosity,
         *(["-x"] if flag("TEST_FAIL_FAST") else []),
+        *json.loads(env("DOCTEST_PATHS", "[]")),
+        *(["--doctest-modules"] if json.loads(env("DOCTEST_PATHS", "[]")) else []),
         *shlex.split(env("PYTEST_ARGS")),
     ]
     code = int(pytest.main(args))
