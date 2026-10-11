@@ -471,6 +471,15 @@ def count(outcomes: list[str]) -> dict[str, int]:
 SLOWEST = 10
 
 
+def build_flavour() -> str:
+    import sysconfig
+
+    if not sysconfig.get_config_var("Py_GIL_DISABLED"):
+        return ""
+    gil_enabled = getattr(sys, "_is_gil_enabled", lambda: False)()
+    return " free-threaded" + (", GIL re-enabled" if gil_enabled else "")
+
+
 def write_summary(
     counts: dict[str, int],
     failing: list[tuple[str, str]],
@@ -481,7 +490,7 @@ def write_summary(
         return
     with open(summary_path, "a", encoding="utf-8") as summary:
         summary.write(
-            f"### Tests on Python {sys.version.split()[0]} ({sys.platform})\n\n"
+            f"### Tests on Python {sys.version.split()[0]}{build_flavour()} ({sys.platform})\n\n"
         )
         summary.write(
             "| Passed | Failed | Errors | Skipped |\n| --- | --- | --- | --- |\n"

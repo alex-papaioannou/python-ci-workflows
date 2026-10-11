@@ -37,6 +37,21 @@ jobs:
       cancel-in-progress: true
 ```
 
+### Free-threaded Python
+
+Add a `t` version, such as `3.14t`, to test on the free-threaded build. While
+extension modules catch up, it is worth listing it in `experimental-python-versions`
+too:
+
+```yaml
+    with:
+      python-versions: '["3.13", "3.14", "3.14t"]'
+      experimental-python-versions: '["3.14t"]'
+```
+
+The job summary heading shows whether the GIL was active, so results from the two
+builds are easy to tell apart.
+
 ### Choosing a ref
 
 - `@v1` follows compatible releases of major version 1.
@@ -56,7 +71,7 @@ inside the checkout. JSON arrays are passed as strings.
 
 | Input | Type | Default | Description |
 | --- | --- | --- | --- |
-| `python-versions` | string | `["3.11", "3.12", "3.13", "3.14"]` | JSON array of Python versions. |
+| `python-versions` | string | `["3.11", "3.12", "3.13", "3.14"]` | JSON array of Python versions. Append `t` for a free-threaded (no-GIL) build, such as `3.14t`. |
 | `operating-systems` | string | `["ubuntu-latest"]` | JSON array of runner labels. Every step runs through Python, so Windows and macOS need no shell changes. |
 | `allow-prereleases` | boolean | `false` | Let `setup-python` install alpha, beta and release-candidate versions. |
 | `experimental-python-versions` | string | `[]` | JSON array of matrix versions whose failures do not fail the run. |

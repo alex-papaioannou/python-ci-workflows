@@ -9,6 +9,7 @@ First tagged release.
 
 ### Added
 
+- Free-threaded Python versions such as `3.14t`, labelled in the job summary.
 - Doctest collection (`doctest-paths`) and the ten slowest tests in the job summary.
 - Testing the built wheel in a clean environment (`test-wheel`).
 - Optional dependency vulnerability scanning with pip-audit (`audit-version`, `audit-ignore`).
