@@ -96,3 +96,8 @@ class WorkflowTests(unittest.TestCase):
         result = self.execute({'tests/test_warn.py': 'import unittest, warnings\nclass T(unittest.TestCase):\n def test_warn(self): warnings.warn("deprecated")'}, {'PYTHONWARNINGS': 'error'})
         self.assertNotEqual(result.returncode, 0)
         self.assertIn('deprecated', result.stderr)
+
+    def test_actions_pinned_to_commit_shas(self):
+        for line in WORKFLOW.read_text().splitlines():
+            if 'uses:' in line:
+                self.assertRegex(line, r'@[0-9a-f]{40}\b', line)
