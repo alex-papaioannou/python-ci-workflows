@@ -78,3 +78,16 @@ Every run appends a pass/fail/skip table and the names of failing tests to the j
 `operating-systems` is a JSON array of runner labels, default `["ubuntu-latest"]`. Every step runs through Python, so `windows-latest` and `macos-latest` work without shell changes. Ruff and package builds run once, on the first operating system and Python version. Write `compile-exclude` patterns that match either path separator, such as `[/\\]generated[/\\]`.
 
 To try an upcoming Python release, add it to `python-versions`, set `allow-prereleases: true`, and list it in `experimental-python-versions`, for example `'["3.15"]'`. Jobs for experimental versions still run and report failures, but do not fail the calling workflow.
+A final `result` job waits for the whole matrix and fails unless every matrix job succeeded. Require the `<caller job> / result` check in branch protection instead of listing each Python version. The workflow also exposes `result` as an output (`success`, `failure`, or `cancelled`) for later jobs in the calling workflow:
+
+```yaml
+jobs:
+  python:
+    uses: alex-papaioannou/python-ci-workflows/.github/workflows/python-ci.yml@main
+  notify:
+    needs: python
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo "CI finished with ${{ needs.python.outputs.result }}"
+```
