@@ -142,6 +142,14 @@ on:
         description: "uv version used when installer is uv"
         type: string
         default: "0.11.32"
+      audit-version:
+        description: "pip-audit version to scan installed dependencies with; empty disables the audit"
+        type: string
+        default: ""
+      audit-ignore:
+        description: "JSON array of vulnerability IDs for pip-audit to ignore"
+        type: string
+        default: "[]"
 permissions:
   contents: read
 jobs:
@@ -201,6 +209,8 @@ jobs:
           PROJECT_EXTRAS: ${{ inputs.project-extras }}
           INSTALLER: ${{ inputs.installer }}
           UV_VERSION: ${{ inputs.uv-version }}
+          AUDIT_VERSION: ${{ inputs.audit-version }}
+          AUDIT_IGNORE: ${{ inputs.audit-ignore }}
         run: python "$PYTHON_CI_STEPS" validate
       - name: Install dependencies
         if: inputs.requirements-file != '' || inputs.install-project
@@ -212,6 +222,12 @@ jobs:
           INSTALLER: ${{ inputs.installer }}
           UV_VERSION: ${{ inputs.uv-version }}
         run: python "$PYTHON_CI_STEPS" install
+      - name: Audit dependencies
+        if: inputs.audit-version != '' && matrix.python-version == fromJSON(inputs.python-versions)[0] && matrix.os == fromJSON(inputs.operating-systems)[0]
+        env:
+          AUDIT_VERSION: ${{ inputs.audit-version }}
+          AUDIT_IGNORE: ${{ inputs.audit-ignore }}
+        run: python "$PYTHON_CI_STEPS" audit
       - name: Lint with Ruff
         if: inputs.ruff-version != '' && matrix.python-version == fromJSON(inputs.python-versions)[0] && matrix.os == fromJSON(inputs.operating-systems)[0]
         env:

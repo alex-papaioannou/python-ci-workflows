@@ -76,6 +76,13 @@ inside the checkout. JSON arrays are passed as strings.
 | `uv-version` | string | `0.11.32` | uv version used when `installer` is `uv`. |
 | `require-hashes` | boolean | `true` | Install with `--require-hashes`. Generate files with `pip-compile --generate-hashes` or `uv pip compile --generate-hashes`. |
 
+### Dependency audit
+
+| Input | Type | Default | Description |
+| --- | --- | --- | --- |
+| `audit-version` | string | `""` | Scan the installed dependencies with this pip-audit version, once per run, against the PyPI vulnerability database. Findings fail the job and appear in the job summary. Empty disables the audit. |
+| `audit-ignore` | string | `[]` | JSON array of vulnerability IDs to accept, such as `["GHSA-xxxx-xxxx-xxxx"]`. |
+
 ### Tests
 
 | Input | Type | Default | Description |
@@ -141,7 +148,7 @@ are skipped.
 2. Set up Python, with pip caching when `requirements-file` is set.
 3. Validate inputs: paths, JSON arrays, versions, globs and regexes. Bad
    configuration fails here, before any project code runs.
-4. Install requirements.
+4. Install requirements and the project, then audit them.
 5. Run Ruff, then mypy.
 6. Byte-compile `compile-paths`.
 7. Build and check the package.

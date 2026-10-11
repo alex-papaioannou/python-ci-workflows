@@ -100,6 +100,16 @@ def validate() -> int:
         raise SystemExit(
             "project-extras requires install-project: true or a uv.lock requirements-file"
         )
+    if not VERSION.fullmatch(env("AUDIT_VERSION")):
+        raise SystemExit("audit-version must be empty or a version such as 2.10.1")
+    try:
+        ignore = json.loads(env("AUDIT_IGNORE", "[]"))
+    except ValueError:
+        ignore = None
+    if not isinstance(ignore, list) or any(
+        not isinstance(v, str) or not v for v in ignore
+    ):
+        raise SystemExit("audit-ignore must be a JSON array of vulnerability IDs")
     if env("INSTALLER", "pip") not in ("pip", "uv"):
         raise SystemExit("installer must be pip or uv")
     if not VERSION.fullmatch(env("UV_VERSION")) or (
@@ -203,6 +213,56 @@ def install() -> int:
         no_deps = ["--no-deps"] if env("REQUIREMENTS_FILE") else []
         return packages("--editable", target, *no_deps)
     return 0
+
+
+def audit() -> int:
+    # Run pip-audit from its own environment so it cannot change, or be broken by,
+    # the dependencies it is auditing.
+    import sysconfig
+    import venv
+
+    tools = tempfile.mkdtemp(prefix="pip-audit-")
+    venv.EnvBuilder(with_pip=True).create(tools)
+    auditor = os.path.join(tools, "Scripts" if os.name == "nt" else "bin", "python")
+    install = [
+        auditor,
+        "-m",
+        "pip",
+        "install",
+        "--disable-pip-version-check",
+        "-q",
+        "pip-audit==" + env("AUDIT_VERSION"),
+    ]
+    if subprocess.run(install, check=False).returncode:
+        raise SystemExit("Could not install pip-audit")
+    paths = sorted({sysconfig.get_path("purelib"), sysconfig.get_path("platlib")})
+    report = os.path.join(tools, "audit.md")
+    command = [
+        auditor,
+        "-m",
+        "pip_audit",
+        "--skip-editable",
+        "--desc",
+        "on",
+        "-f",
+        "markdown",
+        "-o",
+        report,
+    ]
+    command += [arg for path in paths for arg in ("--path", path)]
+    command += [
+        arg
+        for vuln in json.loads(env("AUDIT_IGNORE", "[]"))
+        for arg in ("--ignore-vuln", vuln)
+    ]
+    code = subprocess.run(command, check=False).returncode
+    text = Path(report).read_text(encoding="utf-8") if os.path.exists(report) else ""
+    if text.strip():
+        print(text)
+        if env("GITHUB_STEP_SUMMARY"):
+            with open(env("GITHUB_STEP_SUMMARY"), "a", encoding="utf-8") as summary:
+                summary.write(f"### Dependency audit\n\n{text}\n")
+    return code
 
 
 def ruff() -> int:
@@ -445,6 +505,7 @@ def report_result() -> int:
 STEPS = {
     "validate": validate,
     "install": install,
+    "audit": audit,
     "ruff": ruff,
     "mypy": mypy,
     "compile": compile_sources,
