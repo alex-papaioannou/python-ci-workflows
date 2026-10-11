@@ -74,3 +74,5 @@ Set `build-package: true` to build an sdist and wheel with `python -m build` and
 Set `cancel-in-progress: true` to cancel jobs from an older run when a newer run starts for the same workflow and ref, such as a fresh push to a pull request branch. It is off by default because cancelling runs on the default branch can hide failures.
 
 Every run appends a pass/fail/skip table and the names of failing tests to the job summary. Set `junit-file` (for example `test-results/junit.xml`, relative to `working-directory`) to also write a JUnit XML report and upload it as the `junit-<python version>` artifact, including when tests fail.
+
+`operating-systems` is a JSON array of runner labels, default `["ubuntu-latest"]`. Every step runs through Python, so `windows-latest` and `macos-latest` work without shell changes. Ruff and package builds run once, on the first operating system and Python version. Write `compile-exclude` patterns that match either path separator, such as `[/\\]generated[/\\]`.
