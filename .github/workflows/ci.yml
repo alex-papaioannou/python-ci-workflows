@@ -13,3 +13,4 @@ jobs:
       ruff-version: "0.17.0"
       coverage-version: "7.16.2"
       junit-file: "test-results/junit.xml"
+      operating-systems: '["ubuntu-latest", "windows-latest", "macos-latest"]'

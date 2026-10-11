@@ -6,6 +6,10 @@ on:
         description: "JSON array of Python versions"
         type: string
         default: "[\"3.11\", \"3.12\", \"3.13\"]"
+      operating-systems:
+        description: "JSON array of GitHub-hosted runner labels"
+        type: string
+        default: "[\"ubuntu-latest\"]"
       test-directory:
         description: "Unittest discovery directory"
         type: string
@@ -102,10 +106,10 @@ permissions:
   contents: read
 jobs:
   test:
-    runs-on: ubuntu-latest
+    runs-on: ${{ matrix.os }}
     timeout-minutes: ${{ inputs.timeout-minutes }}
     concurrency:
-      group: ${{ inputs.cancel-in-progress && format('python-ci-{0}-{1}-{2}', github.workflow, github.ref, matrix.python-version) || format('python-ci-{0}-{1}-{2}', github.run_id, github.run_attempt, matrix.python-version) }}
+      group: ${{ inputs.cancel-in-progress && format('python-ci-{0}-{1}-{2}-{3}', github.workflow, github.ref, matrix.os, matrix.python-version) || format('python-ci-{0}-{1}-{2}-{3}', github.run_id, github.run_attempt, matrix.os, matrix.python-version) }}
       cancel-in-progress: ${{ inputs.cancel-in-progress }}
     defaults:
       run:
@@ -117,6 +121,7 @@ jobs:
       fail-fast: false
       max-parallel: ${{ inputs.max-parallel }}
       matrix:
+        os: ${{ fromJSON(inputs.operating-systems) }}
         python-version: ${{ fromJSON(inputs.python-versions) }}
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
@@ -216,7 +221,7 @@ jobs:
               command.insert(4, '--require-hashes')
           raise SystemExit(subprocess.run(command).returncode)
       - name: Lint with Ruff
-        if: inputs.ruff-version != '' && matrix.python-version == fromJSON(inputs.python-versions)[0]
+        if: inputs.ruff-version != '' && matrix.python-version == fromJSON(inputs.python-versions)[0] && matrix.os == fromJSON(inputs.operating-systems)[0]
         shell: python
         env:
           RUFF_VERSION: ${{ inputs.ruff-version }}
@@ -279,7 +284,7 @@ jobs:
               ok = check(path, quiet=1, rx=exclude) and ok
           raise SystemExit(0 if ok else 1)
       - name: Build and check package
-        if: inputs.build-package && matrix.python-version == fromJSON(inputs.python-versions)[0]
+        if: inputs.build-package && matrix.python-version == fromJSON(inputs.python-versions)[0] && matrix.os == fromJSON(inputs.operating-systems)[0]
         shell: python
         run: |
           import glob
@@ -367,7 +372,7 @@ jobs:
           summary_path = os.environ.get('GITHUB_STEP_SUMMARY')
           if summary_path:
               with open(summary_path, 'a', encoding='utf-8') as summary:
-                  summary.write(f"### Tests on Python {sys.version.split()[0]}\n\n")
+                  summary.write(f"### Tests on Python {sys.version.split()[0]} ({sys.platform})\n\n")
                   summary.write('| Passed | Failed | Errors | Skipped |\n| --- | --- | --- | --- |\n')
                   summary.write(f"| {counts['passed']} | {counts['failure']} | {counts['error']} | {counts['skipped']} |\n\n")
                   for test, outcome, _, _ in records:
@@ -397,13 +402,13 @@ jobs:
         if: always() && inputs.junit-file != ''
         uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
         with:
-          name: junit-${{ matrix.python-version }}
+          name: junit-${{ matrix.os }}-${{ matrix.python-version }}
           path: ${{ inputs.working-directory }}/${{ inputs.junit-file }}
           if-no-files-found: ignore
       - name: Upload coverage report
         if: always() && inputs.coverage-version != ''
         uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
         with:
-          name: coverage-${{ matrix.python-version }}
+          name: coverage-${{ matrix.os }}-${{ matrix.python-version }}
           path: ${{ inputs.working-directory }}/coverage.xml
           if-no-files-found: ignore
