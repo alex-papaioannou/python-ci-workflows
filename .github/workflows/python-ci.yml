@@ -90,12 +90,19 @@ on:
         description: "Build an sdist and wheel and validate their metadata"
         type: boolean
         default: false
+      cancel-in-progress:
+        description: "Cancel this job when a newer run starts for the same ref"
+        type: boolean
+        default: false
 permissions:
   contents: read
 jobs:
   test:
     runs-on: ubuntu-latest
     timeout-minutes: ${{ inputs.timeout-minutes }}
+    concurrency:
+      group: ${{ inputs.cancel-in-progress && format('python-ci-{0}-{1}-{2}', github.workflow, github.ref, matrix.python-version) || format('python-ci-{0}-{1}-{2}', github.run_id, github.run_attempt, matrix.python-version) }}
+      cancel-in-progress: ${{ inputs.cancel-in-progress }}
     defaults:
       run:
         working-directory: ${{ inputs.working-directory }}

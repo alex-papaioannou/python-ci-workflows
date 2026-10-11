@@ -271,3 +271,8 @@ class WorkflowTests(unittest.TestCase):
         result = self.execute(files, step="Build and check package")
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertIn("PASSED", result.stdout)
+
+    def test_concurrency_is_opt_in(self):
+        text = WORKFLOW.read_text()
+        self.assertIn("cancel-in-progress: ${{ inputs.cancel-in-progress }}", text)
+        self.assertIn("github.run_id, github.run_attempt", text)
