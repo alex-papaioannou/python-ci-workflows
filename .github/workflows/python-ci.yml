@@ -94,6 +94,10 @@ on:
         description: "Cancel this job when a newer run starts for the same ref"
         type: boolean
         default: false
+      junit-file:
+        description: "Optional JUnit XML report path, uploaded as an artifact"
+        type: string
+        default: ""
 permissions:
   contents: read
 jobs:
@@ -140,6 +144,7 @@ jobs:
           COVERAGE_VERSION: ${{ inputs.coverage-version }}
           COVERAGE_FAIL_UNDER: ${{ inputs.coverage-fail-under }}
           BUILD_PACKAGE: ${{ inputs.build-package }}
+          JUNIT_FILE: ${{ inputs.junit-file }}
         run: |
           import json
           import os
@@ -184,6 +189,8 @@ jobs:
               fail_under = -1
           if not 0 <= fail_under <= 100:
               raise SystemExit('coverage-fail-under must be a number from 0 to 100')
+          if os.environ.get('JUNIT_FILE'):
+              inside(os.environ['JUNIT_FILE'])
           if os.environ.get('BUILD_PACKAGE', 'false').lower() == 'true' and not Path('pyproject.toml').is_file():
               raise SystemExit('build-package requires pyproject.toml in working-directory')
           if os.environ.get('TEST_VERBOSITY', '2') not in ('0', '1', '2'):
@@ -312,6 +319,7 @@ jobs:
           COMPILE_EXCLUDE: ${{ inputs.compile-exclude }}
           COVERAGE_VERSION: ${{ inputs.coverage-version }}
           COVERAGE_FAIL_UNDER: ${{ inputs.coverage-fail-under }}
+          JUNIT_FILE: ${{ inputs.junit-file }}
         run: |
           import os
           import sys
@@ -325,7 +333,56 @@ jobs:
           suite = unittest.defaultTestLoader.discover(os.environ.get('TEST_DIRECTORY', 'tests'), pattern=os.environ.get('TEST_PATTERN', 'test*.py'), top_level_dir=os.environ.get('TOP_LEVEL_DIRECTORY') or None)
           if suite.countTestCases() == 0:
               raise SystemExit('No tests discovered')
-          result = unittest.TextTestRunner(verbosity=int(os.environ.get("TEST_VERBOSITY", "2")), failfast=os.environ.get("TEST_FAIL_FAST", "false").lower() == "true").run(suite)
+          import time
+          import xml.etree.ElementTree as ET
+          records = []
+          class RecordingResult(unittest.TextTestResult):
+              def startTest(self, test):
+                  self._started = time.perf_counter()
+                  super().startTest(test)
+              def _record(self, test, outcome, detail=''):
+                  elapsed = time.perf_counter() - getattr(self, '_started', time.perf_counter())
+                  records.append((test, outcome, detail, elapsed))
+              def addSuccess(self, test):
+                  super().addSuccess(test)
+                  self._record(test, 'passed')
+              def addFailure(self, test, err):
+                  super().addFailure(test, err)
+                  self._record(test, 'failure', self.failures[-1][1])
+              def addError(self, test, err):
+                  super().addError(test, err)
+                  self._record(test, 'error', self.errors[-1][1])
+              def addSkip(self, test, reason):
+                  super().addSkip(test, reason)
+                  self._record(test, 'skipped', reason)
+              def addExpectedFailure(self, test, err):
+                  super().addExpectedFailure(test, err)
+                  self._record(test, 'passed')
+              def addUnexpectedSuccess(self, test):
+                  super().addUnexpectedSuccess(test)
+                  self._record(test, 'failure', 'Unexpected success')
+          runner = unittest.TextTestRunner(verbosity=int(os.environ.get("TEST_VERBOSITY", "2")), failfast=os.environ.get("TEST_FAIL_FAST", "false").lower() == "true", resultclass=RecordingResult)
+          result = runner.run(suite)
+          counts = {name: sum(1 for r in records if r[1] == name) for name in ('passed', 'failure', 'error', 'skipped')}
+          summary_path = os.environ.get('GITHUB_STEP_SUMMARY')
+          if summary_path:
+              with open(summary_path, 'a', encoding='utf-8') as summary:
+                  summary.write(f"### Tests on Python {sys.version.split()[0]}\n\n")
+                  summary.write('| Passed | Failed | Errors | Skipped |\n| --- | --- | --- | --- |\n')
+                  summary.write(f"| {counts['passed']} | {counts['failure']} | {counts['error']} | {counts['skipped']} |\n\n")
+                  for test, outcome, _, _ in records:
+                      if outcome in ('failure', 'error'):
+                          summary.write(f'- {outcome}: `{test.id()}`\n')
+          junit = os.environ.get('JUNIT_FILE')
+          if junit:
+              suite_element = ET.Element('testsuite', name='unittest', tests=str(len(records)), failures=str(counts['failure']), errors=str(counts['error']), skipped=str(counts['skipped']), time=f'{sum(r[3] for r in records):.3f}')
+              for test, outcome, detail, elapsed in records:
+                  classname, _, name = test.id().rpartition('.')
+                  case = ET.SubElement(suite_element, 'testcase', classname=classname, name=name, time=f'{elapsed:.3f}')
+                  if outcome != 'passed':
+                      ET.SubElement(case, outcome, message=str(detail).strip().splitlines()[-1] if str(detail).strip() else outcome).text = str(detail)
+              os.makedirs(os.path.dirname(os.path.abspath(junit)), exist_ok=True)
+              ET.ElementTree(suite_element).write(junit, encoding='utf-8', xml_declaration=True)
           if cov is not None:
               cov.stop()
               cov.save()
@@ -336,6 +393,13 @@ jobs:
                   print(f'Coverage {total:.2f}% is below the required {minimum:g}%', file=sys.stderr)
                   sys.exit(1)
           sys.exit(0 if result.wasSuccessful() else 1)
+      - name: Upload JUnit report
+        if: always() && inputs.junit-file != ''
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
+        with:
+          name: junit-${{ matrix.python-version }}
+          path: ${{ inputs.working-directory }}/${{ inputs.junit-file }}
+          if-no-files-found: ignore
       - name: Upload coverage report
         if: always() && inputs.coverage-version != ''
         uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0

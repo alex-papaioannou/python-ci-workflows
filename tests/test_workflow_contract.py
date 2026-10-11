@@ -33,6 +33,7 @@ class WorkflowTests(unittest.TestCase):
                 path.write_text(content)
             process_env = os.environ.copy()
             process_env["GITHUB_WORKSPACE"] = str(root)
+            process_env["GITHUB_STEP_SUMMARY"] = os.devnull
             process_env.update(env or {})
             return subprocess.run(
                 [sys.executable, "-c", script(step)],
@@ -276,3 +277,43 @@ class WorkflowTests(unittest.TestCase):
         text = WORKFLOW.read_text()
         self.assertIn("cancel-in-progress: ${{ inputs.cancel-in-progress }}", text)
         self.assertIn("github.run_id, github.run_attempt", text)
+
+    def test_junit_report_and_step_summary(self):
+        import xml.etree.ElementTree as ET
+
+        tests = (
+            "import unittest\n\n\nclass T(unittest.TestCase):\n"
+            "    def test_ok(self):\n        pass\n\n"
+            "    def test_bad(self):\n        self.fail('boom')\n\n"
+            "    @unittest.skip('later')\n    def test_skip(self):\n        pass\n"
+        )
+        with tempfile.TemporaryDirectory() as out:
+            summary = Path(out) / "summary.md"
+            report = Path(out) / "reports/junit.xml"
+            result = self.execute(
+                {"tests/test_mix.py": tests},
+                {"JUNIT_FILE": str(report), "GITHUB_STEP_SUMMARY": str(summary)},
+            )
+            self.assertNotEqual(result.returncode, 0)
+            root = ET.parse(report).getroot()
+            self.assertEqual(
+                (
+                    root.get("tests"),
+                    root.get("failures"),
+                    root.get("errors"),
+                    root.get("skipped"),
+                ),
+                ("3", "1", "0", "1"),
+            )
+            self.assertIn("boom", root.find("testcase/failure").text)
+            text = summary.read_text()
+            self.assertIn("| 1 | 1 | 0 | 1 |", text)
+            self.assertIn("test_mix.T.test_bad", text)
+
+    def test_junit_path_must_stay_in_checkout(self):
+        result = self.execute(
+            {"tests/test_ok.py": ""},
+            {"JUNIT_FILE": "../junit.xml"},
+            step="Validate inputs",
+        )
+        self.assertNotEqual(result.returncode, 0)

@@ -72,3 +72,5 @@ Set `coverage-version` (for example `"7.16.2"`) to measure the test run with cov
 Set `build-package: true` to build an sdist and wheel with `python -m build` and validate their metadata with `twine check --strict`, once per run on the first matrix Python version. It requires `pyproject.toml` in `working-directory`. Nothing is published.
 
 Set `cancel-in-progress: true` to cancel jobs from an older run when a newer run starts for the same workflow and ref, such as a fresh push to a pull request branch. It is off by default because cancelling runs on the default branch can hide failures.
+
+Every run appends a pass/fail/skip table and the names of failing tests to the job summary. Set `junit-file` (for example `test-results/junit.xml`, relative to `working-directory`) to also write a JUnit XML report and upload it as the `junit-<python version>` artifact, including when tests fail.
