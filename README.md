@@ -64,3 +64,5 @@ Set `warnings-as-errors: true` to set `PYTHONWARNINGS=error` for job steps. This
 `requirements-file` installs a pip requirements file (relative to `working-directory`) before syntax checks and tests, with pip caching keyed on that file. `require-hashes` defaults to `true`, so every requirement must be pinned with `--hash`; generate such a file with `pip-compile --generate-hashes` or `uv pip compile --generate-hashes`. Set it to `false` only for trusted, unhashed requirement files.
 
 Set `ruff-version` (for example `"0.17.0"`) to run `ruff check` and `ruff format --check` on the first Python version in the matrix. Findings appear as pull request annotations. Set `ruff-format: false` to lint without enforcing formatting. `lint-paths` is a JSON array, default `["."]`; Ruff reads the project's own `pyproject.toml` or `ruff.toml`.
+
+Set `mypy-version` (for example `"2.4.0"`) to type-check `lint-paths` with mypy on every Python version in the matrix. mypy reads `[tool.mypy]` from the project's `pyproject.toml`; install third-party stubs through `requirements-file`.

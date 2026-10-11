@@ -74,6 +74,10 @@ on:
         description: "JSON array of files or directories for lint and type checks"
         type: string
         default: "[\".\"]"
+      mypy-version:
+        description: "mypy version to type-check lint-paths with; empty disables mypy"
+        type: string
+        default: ""
 permissions:
   contents: read
 jobs:
@@ -113,6 +117,7 @@ jobs:
           REQUIREMENTS_FILE: ${{ inputs.requirements-file }}
           RUFF_VERSION: ${{ inputs.ruff-version }}
           LINT_PATHS: ${{ inputs.lint-paths }}
+          MYPY_VERSION: ${{ inputs.mypy-version }}
         run: |
           import json
           import os
@@ -147,6 +152,8 @@ jobs:
                   raise SystemExit(f'Lint target does not exist: {path}')
           if not re.fullmatch(r'|\d+(\.\d+){0,2}', os.environ.get('RUFF_VERSION', '')):
               raise SystemExit('ruff-version must be empty or a version such as 0.6.9')
+          if not re.fullmatch(r'|\d+(\.\d+){0,2}', os.environ.get('MYPY_VERSION', '')):
+              raise SystemExit('mypy-version must be empty or a version such as 1.11.2')
           if os.environ.get('TEST_VERBOSITY', '2') not in ('0', '1', '2'):
               raise SystemExit('test-verbosity must be 0, 1, or 2')
           if os.environ.get('TEST_FAIL_FAST', 'false').lower() not in ('true', 'false'):
@@ -190,6 +197,23 @@ jobs:
           if os.environ.get('RUFF_FORMAT', 'true').lower() == 'true':
               failed = run('-m', 'ruff', 'format', '--check', '--diff', *paths) or failed
           raise SystemExit(1 if failed else 0)
+      - name: Type-check with mypy
+        if: inputs.mypy-version != ''
+        shell: python
+        env:
+          MYPY_VERSION: ${{ inputs.mypy-version }}
+          LINT_PATHS: ${{ inputs.lint-paths }}
+        run: |
+          import json
+          import os
+          import subprocess
+          import sys
+          def run(*args):
+              return subprocess.run([sys.executable, *args]).returncode
+          if run('-m', 'pip', 'install', '--disable-pip-version-check', '-q', 'mypy==' + os.environ['MYPY_VERSION']):
+              raise SystemExit('Could not install mypy')
+          paths = json.loads(os.environ.get('LINT_PATHS', '["."]'))
+          raise SystemExit(run('-m', 'mypy', '--python-version', '{}.{}'.format(*sys.version_info), *paths))
       - name: Check Python syntax
         shell: python
         env:
