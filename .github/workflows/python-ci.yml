@@ -86,6 +86,10 @@ on:
         description: "Minimum total coverage percentage from 0 to 100"
         type: number
         default: 0
+      build-package:
+        description: "Build an sdist and wheel and validate their metadata"
+        type: boolean
+        default: false
 permissions:
   contents: read
 jobs:
@@ -128,6 +132,7 @@ jobs:
           MYPY_VERSION: ${{ inputs.mypy-version }}
           COVERAGE_VERSION: ${{ inputs.coverage-version }}
           COVERAGE_FAIL_UNDER: ${{ inputs.coverage-fail-under }}
+          BUILD_PACKAGE: ${{ inputs.build-package }}
         run: |
           import json
           import os
@@ -172,6 +177,8 @@ jobs:
               fail_under = -1
           if not 0 <= fail_under <= 100:
               raise SystemExit('coverage-fail-under must be a number from 0 to 100')
+          if os.environ.get('BUILD_PACKAGE', 'false').lower() == 'true' and not Path('pyproject.toml').is_file():
+              raise SystemExit('build-package requires pyproject.toml in working-directory')
           if os.environ.get('TEST_VERBOSITY', '2') not in ('0', '1', '2'):
               raise SystemExit('test-verbosity must be 0, 1, or 2')
           if os.environ.get('TEST_FAIL_FAST', 'false').lower() not in ('true', 'false'):
@@ -257,6 +264,24 @@ jobs:
               check = compileall.compile_dir if Path(path).is_dir() else compileall.compile_file
               ok = check(path, quiet=1, rx=exclude) and ok
           raise SystemExit(0 if ok else 1)
+      - name: Build and check package
+        if: inputs.build-package && matrix.python-version == fromJSON(inputs.python-versions)[0]
+        shell: python
+        run: |
+          import glob
+          import os
+          import subprocess
+          import sys
+          import tempfile
+          def run(*args):
+              return subprocess.run([sys.executable, *args]).returncode
+          tools = ['build==1.6.1', 'twine==7.0.0']
+          if run('-m', 'pip', 'install', '--disable-pip-version-check', '-q', *tools):
+              raise SystemExit('Could not install build tools')
+          outdir = tempfile.mkdtemp(prefix='dist-')
+          if run('-m', 'build', '--outdir', outdir, '.'):
+              raise SystemExit('Package build failed')
+          raise SystemExit(run('-m', 'twine', 'check', '--strict', *glob.glob(os.path.join(outdir, '*'))))
       - name: Install coverage
         if: inputs.coverage-version != ''
         shell: python
