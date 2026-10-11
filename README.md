@@ -1,7 +1,7 @@
 # Python CI Workflows
 
 A reusable GitHub Actions workflow for Python projects. By default it checks syntax,
-discovers and runs `unittest` tests, rejects empty test suites, and runs on Python
+discovers and runs `unittest` or pytest tests, rejects empty test suites, and runs on Python
 3.11 through 3.14. It needs no secrets. Dependency installation, linting, type
 checking, coverage and package builds are all optional.
 
@@ -76,10 +76,13 @@ inside the checkout. JSON arrays are passed as strings.
 
 | Input | Type | Default | Description |
 | --- | --- | --- | --- |
-| `test-directory` | string | `tests` | unittest discovery start directory. |
-| `test-pattern` | string | `test*.py` | Filename glob for test modules. Discovering zero tests fails the job. |
-| `top-level-directory` | string | `""` | unittest import root for package-based layouts. |
-| `test-verbosity` | number | `2` | unittest verbosity: 0, 1 or 2. |
+| `test-runner` | string | `unittest` | `unittest` or `pytest`. |
+| `pytest-version` | string | `9.1.1` | pytest version installed when `test-runner` is `pytest`. |
+| `pytest-args` | string | `""` | Extra pytest arguments, split like a shell command line, for example `-m "not slow" -n auto`. |
+| `test-directory` | string | `tests` | Directory to discover tests in. |
+| `test-pattern` | string | `test*.py` | Filename glob for test modules (pytest's `python_files`). Discovering zero tests fails the job. |
+| `top-level-directory` | string | `""` | unittest import root for package-based layouts. Ignored by pytest, which reads `rootdir` from its own configuration. |
+| `test-verbosity` | number | `2` | Output verbosity 0, 1 or 2. For pytest these mean `-q`, the default and `-v`. |
 | `test-fail-fast` | boolean | `false` | Stop after the first failing test. Other matrix jobs still finish. |
 | `warnings-as-errors` | boolean | `false` | Set `PYTHONWARNINGS=error` for every step. |
 | `hash-seed` | string | `0` | `PYTHONHASHSEED`: `random` or an integer from 0 to 4294967295. |
@@ -138,7 +141,7 @@ are skipped.
 5. Run Ruff, then mypy.
 6. Byte-compile `compile-paths`.
 7. Build and check the package.
-8. Run unittest, optionally under coverage, and write reports.
+8. Run unittest or pytest, optionally under coverage, and write reports.
 9. Upload JUnit and coverage artifacts, even when tests fail.
 
 Third-party actions are pinned to full commit SHAs, and tool versions are pinned
@@ -155,6 +158,7 @@ commit of the workflow they pinned. The tests in `tests/` look up which subcomma
 each workflow step runs and execute it against temporary consumer projects:
 
 ```sh
+python -m pip install --require-hashes -r requirements-dev.txt
 python -m unittest discover -s tests
 ```
 

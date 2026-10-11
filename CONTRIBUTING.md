@@ -16,6 +16,7 @@
 ## Local checks
 
 ```sh
+python -m pip install --require-hashes -r requirements-dev.txt
 python -m unittest discover -s tests
 python -m pip install ruff==0.17.0 mypy==2.4.0 actionlint-py==1.7.12.25 zizmor==1.30.1
 ruff check . && ruff format --check .
@@ -34,3 +35,12 @@ Releases follow semantic versioning. A breaking change is removing or renaming a
 input or output, changing a default in a way that can fail existing callers, or
 dropping a supported Python version. To release, record the changes in
 `CHANGELOG.md`, tag `vX.Y.Z`, and move the matching major tag, such as `v1`.
+
+## Development dependencies
+
+`requirements-dev.in` lists test-only dependencies. Regenerate the hashed lock file
+after changing it:
+
+```sh
+uv pip compile --generate-hashes --universal --python-version 3.11 requirements-dev.in -o requirements-dev.txt
+```

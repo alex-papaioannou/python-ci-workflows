@@ -9,6 +9,7 @@ First tagged release.
 
 ### Added
 
+- pytest as an alternative test runner (`test-runner`, `pytest-version`, `pytest-args`).
 - Python 3.14 in the default version matrix.
 - Pip requirements installation, hash-checked by default, with caching.
 - Optional Ruff lint and format checks.

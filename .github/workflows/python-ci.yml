@@ -114,6 +114,18 @@ on:
         description: "Optional JUnit XML report path, uploaded as an artifact"
         type: string
         default: ""
+      test-runner:
+        description: "Test runner: unittest or pytest"
+        type: string
+        default: "unittest"
+      pytest-version:
+        description: "pytest version installed when test-runner is pytest"
+        type: string
+        default: "9.1.1"
+      pytest-args:
+        description: "Extra pytest arguments, split like a shell command line"
+        type: string
+        default: ""
 permissions:
   contents: read
 jobs:
@@ -166,6 +178,9 @@ jobs:
           COVERAGE_FAIL_UNDER: ${{ inputs.coverage-fail-under }}
           BUILD_PACKAGE: ${{ inputs.build-package }}
           JUNIT_FILE: ${{ inputs.junit-file }}
+          TEST_RUNNER: ${{ inputs.test-runner }}
+          PYTEST_VERSION: ${{ inputs.pytest-version }}
+          PYTEST_ARGS: ${{ inputs.pytest-args }}
         run: python "$PYTHON_CI_STEPS" validate
       - name: Install dependencies
         if: inputs.requirements-file != ''
@@ -194,11 +209,13 @@ jobs:
       - name: Build and check package
         if: inputs.build-package && matrix.python-version == fromJSON(inputs.python-versions)[0] && matrix.os == fromJSON(inputs.operating-systems)[0]
         run: python "$PYTHON_CI_STEPS" build
-      - name: Install coverage
-        if: inputs.coverage-version != ''
+      - name: Install test tools
+        if: inputs.coverage-version != '' || inputs.test-runner == 'pytest'
         env:
           COVERAGE_VERSION: ${{ inputs.coverage-version }}
-        run: python "$PYTHON_CI_STEPS" install-coverage
+          TEST_RUNNER: ${{ inputs.test-runner }}
+          PYTEST_VERSION: ${{ inputs.pytest-version }}
+        run: python "$PYTHON_CI_STEPS" install-test-tools
       - name: Run tests and reject empty test suites
         env:
           TEST_DIRECTORY: ${{ inputs.test-directory }}
@@ -209,6 +226,8 @@ jobs:
           COVERAGE_VERSION: ${{ inputs.coverage-version }}
           COVERAGE_FAIL_UNDER: ${{ inputs.coverage-fail-under }}
           JUNIT_FILE: ${{ inputs.junit-file }}
+          TEST_RUNNER: ${{ inputs.test-runner }}
+          PYTEST_ARGS: ${{ inputs.pytest-args }}
         run: python "$PYTHON_CI_STEPS" test
       - name: Upload JUnit report
         if: always() && inputs.junit-file != ''
