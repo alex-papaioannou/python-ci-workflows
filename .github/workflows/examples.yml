@@ -1,0 +1,38 @@
+name: Example consumers
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  stdlib-app:
+    uses: ./.github/workflows/python-ci.yml
+    with:
+      working-directory: examples/stdlib-app
+      python-versions: '["3.11", "3.14"]'
+      doctest-paths: '["app.py"]'
+      coverage-version: "7.16.2"
+      coverage-fail-under: 100
+      warnings-as-errors: true
+  src-package:
+    uses: ./.github/workflows/python-ci.yml
+    with:
+      working-directory: examples/src-package
+      python-versions: '["3.11", "3.14"]'
+      operating-systems: '["ubuntu-latest", "windows-latest"]'
+      test-runner: pytest
+      install-project: true
+      project-extras: test
+      build-package: true
+      test-wheel: true
+      max-parallel: 4
+  uv-project:
+    uses: ./.github/workflows/python-ci.yml
+    with:
+      working-directory: examples/uv-project
+      python-versions: '["3.12"]'
+      installer: uv
+      requirements-file: uv.lock
+      audit-version: "2.10.1"

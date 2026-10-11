@@ -1,0 +1,6 @@
+[project]
+name = "uvdemo"
+version = "0.1.0"
+description = "Example project locked with uv."
+requires-python = ">=3.11"
+dependencies = ["iniconfig==2.1.0"]

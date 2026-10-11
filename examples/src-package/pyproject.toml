@@ -1,0 +1,13 @@
+[build-system]
+requires = ["flit_core>=3.9,<4"]
+build-backend = "flit_core.buildapi"
+
+[project]
+name = "greeting"
+version = "0.1.0"
+description = "Example src-layout package used to exercise the reusable workflow."
+readme = "README.md"
+requires-python = ">=3.11"
+
+[project.optional-dependencies]
+test = ["pytest>=8"]

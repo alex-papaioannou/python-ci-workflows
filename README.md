@@ -190,7 +190,16 @@ python -m pip install --require-hashes -r requirements-dev.txt
 python -m unittest discover -s tests
 ```
 
-This repository's CI calls the workflow locally on Linux, Windows and macOS with
-most features enabled, and lints the workflow files with actionlint and zizmor. See
+The `examples/` directory holds three small consumer projects that the
+`Example consumers` workflow runs through the real reusable workflow on every pull
+request:
+
+- `stdlib-app`: unittest, doctests, 100% coverage and warnings as errors.
+- `src-package`: a src-layout package with pytest, an editable install with extras,
+  and a package build whose wheel is tested on Linux and Windows.
+- `uv-project`: dependencies locked in `uv.lock`, installed with uv and audited.
+
+They double as copy-and-paste starting points. This repository's CI also calls the
+workflow on itself on Linux, Windows and macOS with most features enabled, and lints the workflow files with actionlint and zizmor. See
 [CONTRIBUTING.md](CONTRIBUTING.md) for conventions and [CHANGELOG.md](CHANGELOG.md)
 for release history.
