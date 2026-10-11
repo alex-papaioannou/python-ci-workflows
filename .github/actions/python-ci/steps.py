@@ -241,7 +241,7 @@ def test() -> int:
     sys.path[0] = os.getcwd()
     cov = None
     if env("COVERAGE_VERSION"):
-        import coverage
+        import coverage  # type: ignore[import-not-found,unused-ignore]
 
         cov = coverage.Coverage(data_file=".coverage", source=[os.getcwd()])
         cov.start()
