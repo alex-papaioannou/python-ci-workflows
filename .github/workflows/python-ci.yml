@@ -6,6 +6,14 @@ on:
         description: "JSON array of Python versions"
         type: string
         default: "[\"3.11\", \"3.12\", \"3.13\"]"
+      allow-prereleases:
+        description: "Allow alpha, beta, and release-candidate Python versions"
+        type: boolean
+        default: false
+      experimental-python-versions:
+        description: "JSON array of matrix Python versions whose failures do not fail the run"
+        type: string
+        default: "[]"
       operating-systems:
         description: "JSON array of GitHub-hosted runner labels"
         type: string
@@ -108,6 +116,7 @@ jobs:
   test:
     runs-on: ${{ matrix.os }}
     timeout-minutes: ${{ inputs.timeout-minutes }}
+    continue-on-error: ${{ contains(fromJSON(inputs.experimental-python-versions), matrix.python-version) }}
     concurrency:
       group: ${{ inputs.cancel-in-progress && format('python-ci-{0}-{1}-{2}-{3}', github.workflow, github.ref, matrix.os, matrix.python-version) || format('python-ci-{0}-{1}-{2}-{3}', github.run_id, github.run_attempt, matrix.os, matrix.python-version) }}
       cancel-in-progress: ${{ inputs.cancel-in-progress }}
@@ -130,6 +139,7 @@ jobs:
       - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
         with:
           python-version: ${{ matrix.python-version }}
+          allow-prereleases: ${{ inputs.allow-prereleases }}
           cache: ${{ inputs.requirements-file != '' && 'pip' || '' }}
           cache-dependency-path: ${{ inputs.requirements-file != '' && format('{0}/{1}', inputs.working-directory, inputs.requirements-file) || '' }}
       - name: Validate inputs

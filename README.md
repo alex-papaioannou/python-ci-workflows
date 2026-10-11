@@ -76,3 +76,5 @@ Set `cancel-in-progress: true` to cancel jobs from an older run when a newer run
 Every run appends a pass/fail/skip table and the names of failing tests to the job summary. Set `junit-file` (for example `test-results/junit.xml`, relative to `working-directory`) to also write a JUnit XML report and upload it as the `junit-<python version>` artifact, including when tests fail.
 
 `operating-systems` is a JSON array of runner labels, default `["ubuntu-latest"]`. Every step runs through Python, so `windows-latest` and `macos-latest` work without shell changes. Ruff and package builds run once, on the first operating system and Python version. Write `compile-exclude` patterns that match either path separator, such as `[/\\]generated[/\\]`.
+
+To try an upcoming Python release, add it to `python-versions`, set `allow-prereleases: true`, and list it in `experimental-python-versions`, for example `'["3.15"]'`. Jobs for experimental versions still run and report failures, but do not fail the calling workflow.
