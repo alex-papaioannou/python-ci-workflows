@@ -294,9 +294,13 @@ def audit() -> int:
         for vuln in json.loads(env("AUDIT_IGNORE", "[]"))
         for arg in ("--ignore-vuln", vuln)
     ]
-    code = subprocess.run(command, check=False).returncode
+    # Advisory text is Unicode; avoid the Windows ANSI code page.
+    code = subprocess.run(
+        command, check=False, env={**os.environ, "PYTHONUTF8": "1"}
+    ).returncode
     text = Path(report).read_text(encoding="utf-8") if os.path.exists(report) else ""
     if text.strip():
+        sys.stdout.reconfigure(errors="replace")  # type: ignore[union-attr]
         print(text)
         if env("GITHUB_STEP_SUMMARY"):
             with open(env("GITHUB_STEP_SUMMARY"), "a", encoding="utf-8") as summary:

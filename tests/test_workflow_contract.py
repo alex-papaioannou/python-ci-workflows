@@ -617,7 +617,8 @@ class AuditTests(StepHarness, unittest.TestCase):
                 executable=str(python),
             )
             self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
-            self.assertIn("urllib3", summary.read_text())
+            self.assertTrue(summary.exists(), result.stdout + result.stderr)
+            self.assertIn("urllib3", summary.read_text(encoding="utf-8"))
 
     def test_audit_skips_interpreter_bootstrap_packages(self):
         venv = tempfile.mkdtemp()
