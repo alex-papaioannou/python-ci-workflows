@@ -62,3 +62,5 @@ Set `warnings-as-errors: true` to set `PYTHONWARNINGS=error` for job steps. This
 `hash-seed` defaults to `"0"` for reproducible ordering. Use `"random"` to exercise randomized hashing, or a decimal integer from 0 through 4294967295. Python rejects invalid seeds before executing code.
 
 `requirements-file` installs a pip requirements file (relative to `working-directory`) before syntax checks and tests, with pip caching keyed on that file. `require-hashes` defaults to `true`, so every requirement must be pinned with `--hash`; generate such a file with `pip-compile --generate-hashes` or `uv pip compile --generate-hashes`. Set it to `false` only for trusted, unhashed requirement files.
+
+Set `ruff-version` (for example `"0.17.0"`) to run `ruff check` and `ruff format --check` on the first Python version in the matrix. Findings appear as pull request annotations. Set `ruff-format: false` to lint without enforcing formatting. `lint-paths` is a JSON array, default `["."]`; Ruff reads the project's own `pyproject.toml` or `ruff.toml`.
