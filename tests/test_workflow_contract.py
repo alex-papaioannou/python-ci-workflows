@@ -357,3 +357,57 @@ class WorkflowTests(unittest.TestCase):
                     lines[index + 1].strip().startswith("description: "), line
                 )
         self.assertEqual(set(declared), documented)
+
+    def test_more_invalid_inputs_rejected(self):
+        cases = (
+            {"TEST_PATTERN": "tests/test_*.py"},
+            {"TEST_PATTERN": ""},
+            {"TEST_FAIL_FAST": "maybe"},
+            {"TEST_DIRECTORY": "missing"},
+            {"TOP_LEVEL_DIRECTORY": "missing"},
+            {"COMPILE_PATHS": "not json"},
+            {"COMPILE_PATHS": '[""]'},
+            {"LINT_PATHS": '["../"]'},
+            {"REQUIREMENTS_FILE": "tests"},
+        )
+        for env in cases:
+            result = self.execute({"tests/test_ok.py": ""}, env, step="Validate inputs")
+            self.assertNotEqual(result.returncode, 0, env)
+
+    def test_valid_inputs_accepted(self):
+        env = {
+            "COMPILE_PATHS": '["src", "tests"]',
+            "LINT_PATHS": '["src"]',
+            "REQUIREMENTS_FILE": "requirements.txt",
+            "RUFF_VERSION": "0.17.0",
+            "MYPY_VERSION": "2.4",
+            "COVERAGE_VERSION": "7",
+            "COVERAGE_FAIL_UNDER": "87.5",
+            "JUNIT_FILE": "reports/junit.xml",
+            "TEST_VERBOSITY": "1",
+            "TEST_FAIL_FAST": "true",
+        }
+        files = {"tests/test_ok.py": "", "src/app.py": "", "requirements.txt": ""}
+        result = self.execute(files, env, step="Validate inputs")
+        self.assertEqual(result.returncode, 0, result.stderr)
+
+    def test_unhashed_requirements_allowed_when_hashes_not_required(self):
+        result = self.execute(
+            {"requirements.txt": "./local\n", "local/pyproject.toml": ""},
+            {
+                "REQUIREMENTS_FILE": "requirements.txt",
+                "REQUIRE_HASHES": "false",
+                "PIP_NO_INDEX": "1",
+            },
+            step="Install dependencies",
+        )
+        self.assertNotIn("hash", result.stderr.lower())
+
+    def test_errors_in_tests_fail_the_run(self):
+        result = self.execute(
+            {
+                "tests/test_err.py": "import unittest\n\n\nclass T(unittest.TestCase):\n    def test_err(self):\n        raise KeyError('x')\n"
+            }
+        )
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("KeyError", result.stderr)
