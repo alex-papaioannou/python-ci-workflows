@@ -2,6 +2,7 @@
 
 import importlib.util
 import os
+import re
 import subprocess
 import sys
 import tempfile
@@ -340,3 +341,19 @@ class WorkflowTests(unittest.TestCase):
                 )
                 self.assertEqual(result.returncode, code, outcome)
                 self.assertEqual(output.read_text(), f"result={outcome}\n")
+
+    def test_every_input_is_described_and_documented(self):
+        readme = (WORKFLOW.parents[2] / "README.md").read_text()
+        documented = set(re.findall(r"^\| `([a-z-]+)` \|", readme, re.MULTILINE))
+        lines = WORKFLOW.read_text().splitlines()
+        start = lines.index("    inputs:") + 1
+        declared = []
+        for index, line in enumerate(lines[start:], start):
+            if not line.startswith("      "):
+                break
+            if re.fullmatch(r"      [a-z-]+:", line):
+                declared.append(line.strip()[:-1])
+                self.assertTrue(
+                    lines[index + 1].strip().startswith("description: "), line
+                )
+        self.assertEqual(set(declared), documented)

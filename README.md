@@ -1,12 +1,13 @@
 # Python CI Workflows
 
-Reusable GitHub Actions CI for Python projects that use only the standard library.
-Checks syntax, discovers `unittest` tests under `tests/`, rejects empty test suites,
-and runs on Python 3.11, 3.12, and 3.13. No package installation or secrets required.
+A reusable GitHub Actions workflow for Python projects. By default it checks syntax,
+discovers and runs `unittest` tests, rejects empty test suites, and runs on Python
+3.11, 3.12 and 3.13. It needs no secrets. Dependency installation, linting, type
+checking, coverage and package builds are all optional.
 
-## Usage
+## Quick start
 
-Create `.github/workflows/ci.yml` in a consuming repository:
+Create `.github/workflows/ci.yml` in the consuming repository:
 
 ```yaml
 name: CI
@@ -15,75 +16,104 @@ permissions:
   contents: read
 jobs:
   python:
-    uses: alex-papaioannou/python-ci-workflows/.github/workflows/python-ci.yml@main
+    uses: alex-papaioannou/python-ci-workflows/.github/workflows/python-ci.yml@v1
 ```
 
-Use a reviewed commit SHA instead of `main` for stable consumers. Public consumers
-require this repository to be public. Checkout runs in the calling repository.
-Projects requiring pip dependencies can set `requirements-file`.
-
-The repository's own CI calls the workflow locally and exercises a small runtime
-fixture. It does not certify every possible consumer. GitHub-hosted workflow
-execution remains necessary to validate permissions and integration.
-
-Suggested next contributions:
-optional Ruff checks, and optional package-build validation.
-
-## Workflow behavior tests
-
-The test suite executes the embedded runner in temporary consumer projects. It checks successful root imports, failing tests, import failures, empty discovery, and compilation errors.
-
-Set `python-versions: '["3.11", "3.13"]'` under the reusable job's `with:`. Supply a nonempty JSON array of version strings; GitHub expands it before running jobs.
-
-`test-directory` defaults to `tests`. Paths are relative to the project working directory.
-
-`test-pattern` defaults to `test*.py`. A custom pattern that discovers zero tests still fails the job.
-
-`working-directory` defaults to `.`. Use a repository-relative directory for monorepo projects; compilation, installation, and tests run there.
-
-Set `top-level-directory` for package-based discovery. Discovered directories must be importable according to unittest's package rules; the default leaves discovery to infer its root.
-
-`test-verbosity` accepts 0, 1, or 2; the default remains verbose output (2).
-
-`test-fail-fast: true` stops unittest after its first failure. Matrix fail-fast remains disabled so other Python versions finish.
-
-`timeout-minutes` defaults to 10. Use a positive whole number within GitHub's hosted runner limit (360).
-
-`max-parallel` defaults to 3. Set a positive whole number to bound concurrent matrix jobs; this does not cancel older workflow runs.
-
-`compile-paths` is a JSON array, default `["."]`. Missing targets fail; select source paths to avoid generated or vendored code.
-
-`compile-exclude` is an optional Python regular expression matched against paths by compileall; it does not affect test discovery.
-
-An early validation step rejects nonexistent/out-of-checkout paths, invalid JSON target lists, verbosity values, filename globs, and exclusion regexes. GitHub validates matrix and job-level settings before steps can run.
-
-Set `warnings-as-errors: true` to set `PYTHONWARNINGS=error` for job steps. This can reveal deprecations in dependencies as well as project code.
-
-`hash-seed` defaults to `"0"` for reproducible ordering. Use `"random"` to exercise randomized hashing, or a decimal integer from 0 through 4294967295. Python rejects invalid seeds before executing code.
-
-`requirements-file` installs a pip requirements file (relative to `working-directory`) before syntax checks and tests, with pip caching keyed on that file. `require-hashes` defaults to `true`, so every requirement must be pinned with `--hash`; generate such a file with `pip-compile --generate-hashes` or `uv pip compile --generate-hashes`. Set it to `false` only for trusted, unhashed requirement files.
-
-Set `ruff-version` (for example `"0.17.0"`) to run `ruff check` and `ruff format --check` on the first Python version in the matrix. Findings appear as pull request annotations. Set `ruff-format: false` to lint without enforcing formatting. `lint-paths` is a JSON array, default `["."]`; Ruff reads the project's own `pyproject.toml` or `ruff.toml`.
-
-Set `mypy-version` (for example `"2.4.0"`) to type-check `lint-paths` with mypy on every Python version in the matrix. mypy reads `[tool.mypy]` from the project's `pyproject.toml`; install third-party stubs through `requirements-file`.
-
-Set `coverage-version` (for example `"7.16.2"`) to measure the test run with coverage.py. The job prints a report, uploads `coverage.xml` as the `coverage-<python version>` artifact, and fails when the total falls below `coverage-fail-under` (default 0). Configure omissions in `[tool.coverage]`.
-
-Set `build-package: true` to build an sdist and wheel with `python -m build` and validate their metadata with `twine check --strict`, once per run on the first matrix Python version. It requires `pyproject.toml` in `working-directory`. Nothing is published.
-
-Set `cancel-in-progress: true` to cancel jobs from an older run when a newer run starts for the same workflow and ref, such as a fresh push to a pull request branch. It is off by default because cancelling runs on the default branch can hide failures.
-
-Every run appends a pass/fail/skip table and the names of failing tests to the job summary. Set `junit-file` (for example `test-results/junit.xml`, relative to `working-directory`) to also write a JUnit XML report and upload it as the `junit-<python version>` artifact, including when tests fail.
-
-`operating-systems` is a JSON array of runner labels, default `["ubuntu-latest"]`. Every step runs through Python, so `windows-latest` and `macos-latest` work without shell changes. Ruff and package builds run once, on the first operating system and Python version. Write `compile-exclude` patterns that match either path separator, such as `[/\\]generated[/\\]`.
-
-To try an upcoming Python release, add it to `python-versions`, set `allow-prereleases: true`, and list it in `experimental-python-versions`, for example `'["3.15"]'`. Jobs for experimental versions still run and report failures, but do not fail the calling workflow.
-A final `result` job waits for the whole matrix and fails unless every matrix job succeeded. Require the `<caller job> / result` check in branch protection instead of listing each Python version. The workflow also exposes `result` as an output (`success`, `failure`, or `cancelled`) for later jobs in the calling workflow:
+A fuller configuration:
 
 ```yaml
 jobs:
   python:
-    uses: alex-papaioannou/python-ci-workflows/.github/workflows/python-ci.yml@main
+    uses: alex-papaioannou/python-ci-workflows/.github/workflows/python-ci.yml@v1
+    with:
+      python-versions: '["3.11", "3.12", "3.13"]'
+      operating-systems: '["ubuntu-latest", "windows-latest"]'
+      requirements-file: requirements-dev.txt
+      ruff-version: "0.17.0"
+      mypy-version: "2.4.0"
+      coverage-version: "7.16.2"
+      coverage-fail-under: 90
+      junit-file: test-results/junit.xml
+      cancel-in-progress: true
+```
+
+### Choosing a ref
+
+- `@v1` follows compatible releases of major version 1.
+- `@v1.2.3` or a full commit SHA never changes. A SHA is the most tamper-resistant
+  choice, and Dependabot can keep it current.
+- `@main` gets unreleased changes and is not recommended for consumers.
+
+Checkout runs in the calling repository. Public consumers need this repository to be
+public.
+
+## Inputs
+
+All inputs are optional. Paths are relative to `working-directory` and must stay
+inside the checkout. JSON arrays are passed as strings.
+
+### Matrix and job
+
+| Input | Type | Default | Description |
+| --- | --- | --- | --- |
+| `python-versions` | string | `["3.11", "3.12", "3.13"]` | JSON array of Python versions. |
+| `operating-systems` | string | `["ubuntu-latest"]` | JSON array of runner labels. Every step runs through Python, so Windows and macOS need no shell changes. |
+| `allow-prereleases` | boolean | `false` | Let `setup-python` install alpha, beta and release-candidate versions. |
+| `experimental-python-versions` | string | `[]` | JSON array of matrix versions whose failures do not fail the run. |
+| `max-parallel` | number | `3` | Maximum simultaneous matrix jobs. |
+| `timeout-minutes` | number | `10` | Per-job timeout, a whole number from 1 to 360. |
+| `cancel-in-progress` | boolean | `false` | Cancel older in-flight jobs for the same workflow and ref when a new run starts. |
+| `working-directory` | string | `.` | Project directory inside the checkout, for monorepos. |
+
+### Dependencies
+
+| Input | Type | Default | Description |
+| --- | --- | --- | --- |
+| `requirements-file` | string | `""` | pip requirements file installed before checks, with pip caching keyed on it. |
+| `require-hashes` | boolean | `true` | Install with `--require-hashes`. Generate files with `pip-compile --generate-hashes` or `uv pip compile --generate-hashes`. |
+
+### Tests
+
+| Input | Type | Default | Description |
+| --- | --- | --- | --- |
+| `test-directory` | string | `tests` | unittest discovery start directory. |
+| `test-pattern` | string | `test*.py` | Filename glob for test modules. Discovering zero tests fails the job. |
+| `top-level-directory` | string | `""` | unittest import root for package-based layouts. |
+| `test-verbosity` | number | `2` | unittest verbosity: 0, 1 or 2. |
+| `test-fail-fast` | boolean | `false` | Stop after the first failing test. Other matrix jobs still finish. |
+| `warnings-as-errors` | boolean | `false` | Set `PYTHONWARNINGS=error` for every step. |
+| `hash-seed` | string | `0` | `PYTHONHASHSEED`: `random` or an integer from 0 to 4294967295. |
+| `junit-file` | string | `""` | Write a JUnit XML report here and upload it as `junit-<os>-<python>`. |
+
+### Syntax, lint and type checks
+
+| Input | Type | Default | Description |
+| --- | --- | --- | --- |
+| `compile-paths` | string | `["."]` | JSON array of files or directories to byte-compile. |
+| `compile-exclude` | string | `""` | Python regex of paths to skip while compiling. Match either separator, such as `[/\\]generated[/\\]`. |
+| `ruff-version` | string | `""` | Run `ruff check` at this version, once per run. Empty disables Ruff. |
+| `ruff-format` | boolean | `true` | Also run `ruff format --check` when Ruff is enabled. |
+| `lint-paths` | string | `["."]` | JSON array of paths for Ruff and mypy. |
+| `mypy-version` | string | `""` | Type-check `lint-paths` with this mypy version on every matrix job. Empty disables mypy. |
+
+### Coverage and packaging
+
+| Input | Type | Default | Description |
+| --- | --- | --- | --- |
+| `coverage-version` | string | `""` | Measure tests with this coverage.py version and upload `coverage.xml` as `coverage-<os>-<python>`. |
+| `coverage-fail-under` | number | `0` | Fail when total coverage is below this percentage. |
+| `build-package` | boolean | `false` | Build an sdist and wheel and run `twine check --strict`, once per run. Requires `pyproject.toml`. Nothing is published. |
+
+## Outputs and required checks
+
+A final `result` job waits for the whole matrix and fails unless it succeeded. In
+branch protection, require the single `<caller job> / result` check instead of
+listing every matrix job. The same value is exposed as the `result` output:
+
+```yaml
+jobs:
+  python:
+    uses: alex-papaioannou/python-ci-workflows/.github/workflows/python-ci.yml@v1
   notify:
     needs: python
     if: always()
@@ -91,3 +121,39 @@ jobs:
     steps:
       - run: echo "CI finished with ${{ needs.python.outputs.result }}"
 ```
+
+Every test job also appends a pass, fail, error and skip table and the IDs of
+failing tests to the job summary.
+
+## How it runs
+
+Each matrix job runs these steps in order. Steps for features you have not enabled
+are skipped.
+
+1. Check out the caller's repository without persisting credentials.
+2. Set up Python, with pip caching when `requirements-file` is set.
+3. Validate inputs: paths, JSON arrays, versions, globs and regexes. Bad
+   configuration fails here, before any project code runs.
+4. Install requirements.
+5. Run Ruff, then mypy.
+6. Byte-compile `compile-paths`.
+7. Build and check the package.
+8. Run unittest, optionally under coverage, and write reports.
+9. Upload JUnit and coverage artifacts, even when tests fail.
+
+Third-party actions are pinned to full commit SHAs, and tool versions are pinned
+explicitly.
+
+## Development
+
+The tests in `tests/` pull each embedded step out of the workflow file and run it
+against temporary consumer projects:
+
+```sh
+python -m unittest discover -s tests
+```
+
+This repository's CI calls the workflow locally on Linux, Windows and macOS with
+most features enabled, and lints the workflow files with actionlint and zizmor. See
+[CONTRIBUTING.md](CONTRIBUTING.md) for conventions and [CHANGELOG.md](CHANGELOG.md)
+for release history.
