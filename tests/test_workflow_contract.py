@@ -635,3 +635,46 @@ class AuditTests(StepHarness, unittest.TestCase):
         )
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertIn("No third-party packages to audit", result.stdout)
+
+
+class WheelTests(StepHarness, unittest.TestCase):
+    PYPROJECT = (
+        '[build-system]\nrequires = ["flit_core>=3.9,<4"]\nbuild-backend = "flit_core.buildapi"\n\n'
+        '[project]\nname = "wheelpkg"\nversion = "1.0"\ndescription = "Fixture"\nreadme = "README.md"\n'
+    )
+    TEST = "import unittest\n\nfrom wheelpkg import VALUE\n\n\nclass T(unittest.TestCase):\n    def test_value(self):\n        self.assertEqual(VALUE, 1)\n"
+
+    def files(self, init):
+        return {
+            "pyproject.toml": self.PYPROJECT,
+            "README.md": "Fixture\n",
+            "wheelpkg/__init__.py": init,
+            "helper.py": "VALUE = 1\n",
+            "tests/test_pkg.py": self.TEST,
+        }
+
+    def test_wheel_tests_pass_for_complete_package(self):
+        result = self.execute(
+            self.files("VALUE = 1\n"),
+            {"TEST_WHEEL": "true"},
+            step="Build and check package",
+        )
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn("in a clean environment", result.stdout)
+
+    def test_wheel_tests_catch_modules_missing_from_the_wheel(self):
+        # helper.py sits beside the package, so it is importable from the source tree
+        # but is not part of the wheel.
+        result = self.execute(
+            self.files("from helper import VALUE\n"),
+            {"TEST_WHEEL": "true"},
+            step="Build and check package",
+        )
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("helper", result.stderr)
+
+    def test_wheel_requires_build(self):
+        result = self.execute(
+            {"tests/test_ok.py": ""}, {"TEST_WHEEL": "true"}, step="Validate inputs"
+        )
+        self.assertNotEqual(result.returncode, 0)
