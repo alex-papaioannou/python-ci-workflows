@@ -317,3 +317,11 @@ class WorkflowTests(unittest.TestCase):
             step="Validate inputs",
         )
         self.assertNotEqual(result.returncode, 0)
+
+    def test_prerelease_versions_are_opt_in_and_non_blocking(self):
+        text = WORKFLOW.read_text()
+        self.assertIn("allow-prereleases: ${{ inputs.allow-prereleases }}", text)
+        self.assertIn(
+            "contains(fromJSON(inputs.experimental-python-versions), matrix.python-version)",
+            text,
+        )
