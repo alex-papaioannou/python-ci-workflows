@@ -29,6 +29,7 @@ class WorkflowTests(unittest.TestCase):
                 path.parent.mkdir(parents=True, exist_ok=True)
                 path.write_text(content)
             process_env = os.environ.copy()
+            process_env['GITHUB_WORKSPACE'] = str(root)
             process_env.update(env or {})
             return subprocess.run([sys.executable, '-c', script(step)], cwd=root,
                                   env=process_env, text=True, capture_output=True)
@@ -101,3 +102,17 @@ class WorkflowTests(unittest.TestCase):
         for line in WORKFLOW.read_text().splitlines():
             if 'uses:' in line:
                 self.assertRegex(line, r'@[0-9a-f]{40}\b', line)
+
+    def test_missing_requirements_file_rejected(self):
+        result = self.execute({'tests/test_ok.py': ''}, {'REQUIREMENTS_FILE': 'missing.txt'}, step='Validate inputs')
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn('requirements-file', result.stderr)
+
+    def test_unhashed_requirements_rejected(self):
+        result = self.execute({'requirements.txt': './local\n', 'local/pyproject.toml': ''}, {'REQUIREMENTS_FILE': 'requirements.txt', 'PIP_NO_INDEX': '1'}, step='Install dependencies')
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn('hash', result.stderr.lower())
+
+    def test_empty_requirements_install(self):
+        result = self.execute({'requirements.txt': '# none\n'}, {'REQUIREMENTS_FILE': 'requirements.txt', 'PIP_NO_INDEX': '1'}, step='Install dependencies')
+        self.assertEqual(result.returncode, 0, result.stderr)

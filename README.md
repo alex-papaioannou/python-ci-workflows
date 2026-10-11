@@ -20,13 +20,13 @@ jobs:
 
 Use a reviewed commit SHA instead of `main` for stable consumers. Public consumers
 require this repository to be public. Checkout runs in the calling repository.
-Projects requiring pip dependencies need an extension before using this workflow.
+Projects requiring pip dependencies can set `requirements-file`.
 
 The repository's own CI calls the workflow locally and exercises a small runtime
 fixture. It does not certify every possible consumer. GitHub-hosted workflow
 execution remains necessary to validate permissions and integration.
 
-Suggested next contributions: dependency installation with explicit lockfiles,
+Suggested next contributions:
 optional Ruff checks, and optional package-build validation.
 
 ## Workflow behavior tests
@@ -60,3 +60,5 @@ An early validation step rejects nonexistent/out-of-checkout paths, invalid JSON
 Set `warnings-as-errors: true` to set `PYTHONWARNINGS=error` for job steps. This can reveal deprecations in dependencies as well as project code.
 
 `hash-seed` defaults to `"0"` for reproducible ordering. Use `"random"` to exercise randomized hashing, or a decimal integer from 0 through 4294967295. Python rejects invalid seeds before executing code.
+
+`requirements-file` installs a pip requirements file (relative to `working-directory`) before syntax checks and tests, with pip caching keyed on that file. `require-hashes` defaults to `true`, so every requirement must be pinned with `--hash`; generate such a file with `pip-compile --generate-hashes` or `uv pip compile --generate-hashes`. Set it to `false` only for trusted, unhashed requirement files.

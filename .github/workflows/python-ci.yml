@@ -54,6 +54,14 @@ on:
         description: "Python hash seed: random or integer 0 through 4294967295"
         type: string
         default: "0"
+      requirements-file:
+        description: "Optional pip requirements file to install"
+        type: string
+        default: ""
+      require-hashes:
+        description: "Require hashes for every installed requirement"
+        type: boolean
+        default: true
 permissions:
   contents: read
 jobs:
@@ -78,6 +86,8 @@ jobs:
       - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
         with:
           python-version: ${{ matrix.python-version }}
+          cache: ${{ inputs.requirements-file != '' && 'pip' || '' }}
+          cache-dependency-path: ${{ inputs.requirements-file != '' && format('{0}/{1}', inputs.working-directory, inputs.requirements-file) || '' }}
       - name: Validate inputs
         shell: python
         env:
@@ -88,6 +98,7 @@ jobs:
           TEST_FAIL_FAST: ${{ inputs.test-fail-fast }}
           COMPILE_PATHS: ${{ inputs.compile-paths }}
           COMPILE_EXCLUDE: ${{ inputs.compile-exclude }}
+          REQUIREMENTS_FILE: ${{ inputs.requirements-file }}
         run: |
           import json
           import os
@@ -105,6 +116,9 @@ jobs:
               value = os.environ.get(key)
               if value and not inside(value).is_dir():
                   raise SystemExit(f'{key} must name an existing directory')
+          requirements = os.environ.get('REQUIREMENTS_FILE')
+          if requirements and not inside(requirements).is_file():
+              raise SystemExit('requirements-file must name an existing file')
           paths = json.loads(os.environ.get('COMPILE_PATHS', '["."]'))
           if not isinstance(paths, list) or not paths or any(not isinstance(p, str) or not p for p in paths):
               raise SystemExit('compile-paths must be a nonempty JSON array of path strings')
@@ -119,6 +133,20 @@ jobs:
           if not pattern or '/' in pattern or '\\' in pattern:
               raise SystemExit('test-pattern must be a nonempty filename glob')
           re.compile(os.environ.get('COMPILE_EXCLUDE', ''))
+      - name: Install dependencies
+        if: inputs.requirements-file != ''
+        shell: python
+        env:
+          REQUIREMENTS_FILE: ${{ inputs.requirements-file }}
+          REQUIRE_HASHES: ${{ inputs.require-hashes }}
+        run: |
+          import os
+          import subprocess
+          import sys
+          command = [sys.executable, '-m', 'pip', 'install', '--disable-pip-version-check', '-r', os.environ['REQUIREMENTS_FILE']]
+          if os.environ.get('REQUIRE_HASHES', 'true').lower() == 'true':
+              command.insert(4, '--require-hashes')
+          raise SystemExit(subprocess.run(command).returncode)
       - name: Check Python syntax
         shell: python
         env:
