@@ -209,3 +209,19 @@ class WorkflowTests(unittest.TestCase):
         self.assertIn("F401", bad.stdout)
         good = self.execute({"good.py": "VALUE = 1\n"}, env, step="Lint with Ruff")
         self.assertEqual(good.returncode, 0, good.stdout + good.stderr)
+
+    def test_mypy_reports_type_errors(self):
+        env = {"MYPY_VERSION": "2.4.0", "LINT_PATHS": '["."]'}
+        bad = self.execute(
+            {"bad.py": "VALUE: int = 'text'\n"}, env, step="Type-check with mypy"
+        )
+        self.assertNotEqual(bad.returncode, 0)
+        self.assertIn("incompatible", bad.stdout.lower())
+        good = self.execute(
+            {"good.py": "VALUE: int = 1\n"}, env, step="Type-check with mypy"
+        )
+        self.assertEqual(good.returncode, 0, good.stdout + good.stderr)
+        invalid = self.execute(
+            {"tests/test_ok.py": ""}, {"MYPY_VERSION": "newest"}, step="Validate inputs"
+        )
+        self.assertNotEqual(invalid.returncode, 0)
