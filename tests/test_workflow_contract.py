@@ -1,4 +1,4 @@
-"""Execute the actual embedded workflow runner against temporary consumers."""
+"""Run the workflow's step scripts against temporary consumer projects."""
 
 import importlib.util
 import os
@@ -9,19 +9,22 @@ import tempfile
 import unittest
 from pathlib import Path
 
-WORKFLOW = Path(__file__).parents[1] / ".github/workflows/python-ci.yml"
+ROOT = Path(__file__).parents[1]
+WORKFLOW = ROOT / ".github/workflows/python-ci.yml"
+STEPS = ROOT / ".github/actions/python-ci/steps.py"
 
 
 def script(name):
+    """Return the steps.py subcommand that the named workflow step runs."""
     lines = WORKFLOW.read_text().splitlines()
     start = lines.index("      - name: " + name)
-    start = lines.index("        run: |", start) + 1
-    block = []
-    for line in lines[start:]:
-        if line and not line.startswith("          "):
+    for line in lines[start + 1 :]:
+        if line.startswith("      - "):
             break
-        block.append(line[10:])
-    return "\n".join(block)
+        match = re.fullmatch(r'        run: python "\$PYTHON_CI_STEPS" ([a-z-]+)', line)
+        if match:
+            return match.group(1)
+    raise AssertionError(f"Step {name!r} does not run a step script")
 
 
 class WorkflowTests(unittest.TestCase):
@@ -37,7 +40,7 @@ class WorkflowTests(unittest.TestCase):
             process_env["GITHUB_STEP_SUMMARY"] = os.devnull
             process_env.update(env or {})
             return subprocess.run(
-                [sys.executable, "-c", script(step)],
+                [sys.executable, str(STEPS), script(step)],
                 check=False,
                 cwd=root,
                 env=process_env,
@@ -168,7 +171,7 @@ class WorkflowTests(unittest.TestCase):
     def test_actions_pinned_to_commit_shas(self):
         for workflow in WORKFLOW.parent.glob("*.yml"):
             for line in workflow.read_text().splitlines():
-                if "uses:" in line and "uses: ./" not in line:
+                if "uses:" in line and not re.search(r"uses: (\./|\$/)", line):
                     self.assertRegex(
                         line, r"@[0-9a-f]{40}\b", f"{workflow.name}: {line}"
                     )

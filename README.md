@@ -142,12 +142,17 @@ are skipped.
 9. Upload JUnit and coverage artifacts, even when tests fail.
 
 Third-party actions are pinned to full commit SHAs, and tool versions are pinned
-explicitly.
+explicitly. The step scripts are fetched at the same commit as the workflow, without
+checking out anything into your workspace. This needs a GitHub-hosted runner, or a
+self-hosted runner on version 2.336.0 or newer.
 
 ## Development
 
-The tests in `tests/` pull each embedded step out of the workflow file and run it
-against temporary consumer projects:
+Step logic lives in `.github/actions/python-ci/steps.py`, one subcommand per step.
+The workflow loads it through the same-repository action reference
+`$/.github/actions/python-ci`, so callers always run the scripts from the exact
+commit of the workflow they pinned. The tests in `tests/` look up which subcommand
+each workflow step runs and execute it against temporary consumer projects:
 
 ```sh
 python -m unittest discover -s tests

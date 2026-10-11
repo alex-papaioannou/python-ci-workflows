@@ -3,7 +3,9 @@
 ## Ground rules
 
 - Keep each pull request to one behavior change, with tests and README updates.
-- Every embedded step uses `shell: python` so it runs the same way on Linux, macOS and Windows.
+- Step logic belongs in `.github/actions/python-ci/steps.py` as a subcommand. Use
+  only the standard library and Python 3.9-compatible syntax there, so it runs the
+  same way on every supported OS and Python version.
 - New inputs are optional and default to today's behavior. Validate them in the
   `Validate inputs` step so bad configuration fails before any project code runs.
 - Pin third-party actions to a full commit SHA with a version comment, and pin tool
@@ -15,14 +17,16 @@
 
 ```sh
 python -m unittest discover -s tests
-python -m pip install ruff==0.17.0 actionlint-py==1.7.12.25 zizmor==1.30.1
+python -m pip install ruff==0.17.0 mypy==2.4.0 actionlint-py==1.7.12.25 zizmor==1.30.1
 ruff check . && ruff format --check .
+mypy tests .github/actions/python-ci
 actionlint
 zizmor --offline --min-severity medium .github/workflows
 ```
 
-Tests find a step by its `- name:` and run its `run:` block in a temporary project,
-so renaming a step means updating the tests.
+Tests find a workflow step by its `- name:`, read which `steps.py` subcommand it
+runs, and execute that subcommand in a temporary project. Renaming a step means
+updating the tests.
 
 ## Releases
 
