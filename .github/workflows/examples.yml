@@ -41,3 +41,5 @@ jobs:
       installer: uv
       requirements-file: uv.lock
       audit-version: "2.10.1"
+      # One runner as JSON: labels it must all have, like one operating-systems entry.
+      result-runner: '["ubuntu-latest"]'

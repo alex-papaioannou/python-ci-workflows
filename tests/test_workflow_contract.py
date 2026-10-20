@@ -12,6 +12,11 @@ import unittest
 import unittest.mock
 from pathlib import Path
 
+try:
+    import yaml
+except ImportError:  # pragma: no cover - requirements-dev.txt installs PyYAML
+    yaml = None  # type: ignore[assignment]
+
 ROOT = Path(__file__).parents[1]
 WORKFLOW = ROOT / ".github/workflows/python-ci.yml"
 STEPS = ROOT / ".github/actions/python-ci/steps.py"
@@ -796,17 +801,25 @@ class WorkflowTests(StepHarness, unittest.TestCase):
             text,
         )
 
-    def test_result_job_reports_matrix_outcome(self):
-        for outcome, code in (("success", 0), ("failure", 1), ("cancelled", 1)):
-            with tempfile.TemporaryDirectory() as out:
-                output = Path(out) / "output"
-                result = self.execute(
-                    {},
-                    {"MATRIX_RESULT": outcome, "GITHUB_OUTPUT": str(output)},
-                    step="Report matrix result",
-                )
-                self.assertEqual(result.returncode, code, outcome)
-                self.assertEqual(output.read_text(), f"result={outcome}\n")
+    @unittest.skipUnless(yaml, "needs PyYAML")
+    def test_result_job_reports_matrix_outcome_without_python(self):
+        job = yaml.safe_load(WORKFLOW.read_text())["jobs"]["result"]
+        self.assertEqual(job["needs"], "test")
+        self.assertEqual(job["if"], "always()")
+        # A label, or JSON for a label array or runner group, as one operating-systems entry.
+        self.assertEqual(
+            job["runs-on"],
+            "${{ (startsWith(inputs.result-runner, '[') || startsWith(inputs.result-runner, '{'))"
+            " && fromJSON(inputs.result-runner) || inputs.result-runner }}",
+        )
+        self.assertEqual(job["outputs"]["result"], "${{ needs.test.result }}")
+        # One step that fails unless the matrix succeeded, and nothing that needs
+        # Python or this repository's action.
+        (step,) = job["steps"]
+        self.assertEqual(step["if"], "needs.test.result != 'success'")
+        self.assertEqual(step["run"], "exit 1")
+        self.assertNotIn("uses", step)
+        self.assertNotIn("shell", step)
 
     def test_every_input_is_described_and_documented(self):
         readme = (WORKFLOW.parents[2] / "README.md").read_text()

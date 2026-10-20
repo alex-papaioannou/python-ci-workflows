@@ -110,6 +110,10 @@ on:
         description: "Optional name that tells apart several calls of this workflow from one caller workflow"
         type: string
         default: ""
+      result-runner:
+        description: "Runner for the final result job: a label, or one runner as a JSON label array or runner-group object"
+        type: string
+        default: "ubuntu-latest"
       cancel-in-progress:
         description: "Cancel this job when a newer run starts for the same ref"
         type: boolean
@@ -320,18 +324,13 @@ jobs:
     name: result
     needs: test
     if: always()
-    runs-on: ubuntu-latest
+    runs-on: ${{ (startsWith(inputs.result-runner, '[') || startsWith(inputs.result-runner, '{')) && fromJSON(inputs.result-runner) || inputs.result-runner }}
     timeout-minutes: 5
     outputs:
-      result: ${{ steps.result.outputs.result }}
-    defaults:
-      run:
-        shell: bash
+      result: ${{ needs.test.result }}
     steps:
-      - name: Load step scripts
-        uses: $/.github/actions/python-ci
-      - name: Report matrix result
-        id: result
-        env:
-          MATRIX_RESULT: ${{ needs.test.result }}
-        run: python "$PYTHON_CI_STEPS" result
+      # No checkout and no Python: this job only turns the matrix result into one
+      # check, so it works on any runner, including ones without Python.
+      - name: Fail because the matrix result is ${{ needs.test.result }}
+        if: needs.test.result != 'success'
+        run: exit 1
