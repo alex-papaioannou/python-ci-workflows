@@ -46,3 +46,23 @@ class ReleaseGateTests(unittest.TestCase):
         self.assertIn("contents: write", job("release"))
         self.assertEqual(RELEASE.count("contents: write"), 1)
         self.assertRegex(RELEASE, r"(?m)^permissions:\n  contents: read$")
+
+    def test_gated_calls_never_share_concurrency_groups_or_artifact_names(self):
+        # Calls in one release run share github.run_id, so each python-ci call must
+        # differ in working-directory or call-name (see python-ci.yml concurrency).
+        calls = []
+        for workflow in ("ci.yml", "examples.yml"):
+            text = (WORKFLOWS / workflow).read_text(encoding="utf-8")
+            for block in re.split(r"(?m)^  (?=[a-z-]+:\n)", text)[1:]:
+                if "uses: ./.github/workflows/python-ci.yml" not in block:
+                    continue
+                directory = re.search(r"working-directory: (\S+)", block)
+                call_name = re.search(r"call-name: (\S+)", block)
+                calls.append(
+                    (
+                        directory.group(1) if directory else ".",
+                        call_name.group(1) if call_name else "",
+                    )
+                )
+        self.assertGreaterEqual(len(calls), 4)
+        self.assertEqual(len(calls), len(set(calls)), calls)

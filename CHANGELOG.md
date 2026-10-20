@@ -37,6 +37,11 @@ major tag such as `v1`, an exact release, or a commit SHA.
   `call-name`, end in `-<call-name>` or `-<working-directory>`. Single calls from
   the repository root keep their names.
 
+### Changed
+
+- Releases are published only from `main`, and only after the smoke test, the
+  example consumers and workflow lint pass again on the released commit.
+
 ### Security
 
 - The default `uv-version` is now 0.13.4. Earlier uv releases trust a root

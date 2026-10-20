@@ -49,6 +49,12 @@ move the major tag (`vX`) to the same commit. Releases run only from `main`, in 
 `release` environment. If the version is already released it does nothing, so editing
 older changelog entries is safe.
 
+The `release` environment is configured once in the repository settings: Settings >
+Environments > `release` > Deployment branches and tags > Selected branches and tags,
+with `main` as the only allowed branch. Until then GitHub creates the environment on
+first use without restrictions, and the `github.ref` checks in `release.yml` remain
+the only branch guard.
+
 ## Development dependencies
 
 `requirements-dev.in` lists test-only dependencies and `requirements-lint.in` the
