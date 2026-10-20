@@ -72,6 +72,12 @@ major tag such as `v1`, an exact release, or a commit SHA.
 
 ### Behaviour changes
 
+- `test-wheel` installs the locked dependencies from `requirements-file` (a `.txt`,
+  `uv.lock` or `pylock.toml`) the same way as the main environment, then the wheel
+  with `--no-deps`. It used to resolve the wheel's dependencies afresh, so it could
+  test against versions the lock does not allow, and it ignored `uv.lock` and
+  `pylock.toml`. It now fails when the wheel's own requirements are missing from the
+  lock.
 - With unittest, a malformed doctest under `doctest-paths` now fails the run as a
   test error naming the file; it used to be skipped silently.
 - With unittest, a `doctest-paths` file entry whose path is not a module name, such

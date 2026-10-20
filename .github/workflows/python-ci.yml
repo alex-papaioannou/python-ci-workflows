@@ -290,6 +290,7 @@ jobs:
           TEST_WHEEL: ${{ inputs.test-wheel }}
           REQUIREMENTS_FILE: ${{ inputs.requirements-file }}
           REQUIRE_HASHES: ${{ inputs.require-hashes }}
+          INSTALLER: ${{ inputs.installer }}
           PROJECT_EXTRAS: ${{ inputs.project-extras }}
           TEST_RUNNER: ${{ inputs.test-runner }}
           PYTEST_VERSION: ${{ inputs.pytest-version }}

@@ -1,0 +1,14 @@
+[build-system]
+requires = ["flit_core>=3.9,<4"]
+build-backend = "flit_core.buildapi"
+
+[project]
+name = "pathpkg"
+version = "1.0"
+description = "Fixture"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = ["localdep"]
+
+[tool.uv.sources]
+localdep = { path = "localdep" }
