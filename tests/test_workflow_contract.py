@@ -1229,6 +1229,55 @@ class DoctestAndTimingTests(StepHarness, unittest.TestCase):
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("outside working-directory", result.stderr)
 
+    def test_inputs_without_effect_warn(self):
+        cases = (
+            (
+                {"COVERAGE_FAIL_UNDER": "80", "COVERAGE_VERSION": ""},
+                {},
+                "coverage-fail-under has no effect without coverage-version",
+            ),
+            (
+                {"AUDIT_IGNORE": '["GHSA-1"]', "AUDIT_VERSION": ""},
+                {},
+                "audit-ignore has no effect without audit-version",
+            ),
+            (
+                {
+                    "INSTALL_PROJECT": "true",
+                    "PROJECT_EXTRAS": "test",
+                    "REQUIREMENTS_FILE": "requirements.txt",
+                },
+                {"pyproject.toml": "", "requirements.txt": ""},
+                "extras' dependencies must already be in requirements-file",
+            ),
+        )
+        for env, files, warning in cases:
+            with self.subTest(warning=warning):
+                result = self.execute(
+                    {"tests/test_ok.py": "", **files}, env, step="Validate inputs"
+                )
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertIn("::warning::", result.stdout)
+                self.assertIn(warning, result.stdout)
+        quiet = self.execute(
+            {"tests/test_ok.py": ""},
+            {"COVERAGE_FAIL_UNDER": "0"},
+            step="Validate inputs",
+        )
+        self.assertNotIn("::warning::", quiet.stdout)
+
+    def test_failed_hashed_install_explains_require_hashes(self):
+        result = self.execute(
+            {"requirements.txt": "./local\n", "local/pyproject.toml": ""},
+            {"REQUIREMENTS_FILE": "requirements.txt", "PIP_NO_INDEX": "1"},
+            step="Install dependencies",
+        )
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn(
+            "::error::Installing requirements-file failed with require-hashes: true",
+            result.stdout,
+        )
+
     def test_python_versions_below_the_floor_warn(self):
         result = self.execute(
             {"tests/test_ok.py": ""},
