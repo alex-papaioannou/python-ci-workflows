@@ -618,6 +618,23 @@ def build() -> int:
     return test_wheel(outdir) if flag("TEST_WHEEL") else 0
 
 
+def unmet_requirements(interpreter: str, wheel: str) -> list[str]:
+    """Return pip check's complaints about the wheel's own requirements.
+
+    Conflicts between other locked packages, such as ones a uv override-dependencies
+    setting allows, are the lock's business and already present in the main tests.
+    """
+    name = canonical(os.path.basename(wheel).split("-")[0])
+    report = subprocess.run(
+        [interpreter, "-m", "pip", "check"], check=False, capture_output=True, text=True
+    ).stdout
+    return [
+        line
+        for line in report.splitlines()
+        if line.split() and canonical(line.split()[0]) == name
+    ]
+
+
 def test_wheel(outdir: str) -> int:
     """Run the test suite against the built wheel in a clean virtual environment."""
     import shutil
@@ -638,38 +655,32 @@ def test_wheel(outdir: str) -> int:
     def venv_install(*args: str) -> int:
         return venv_run("-m", "pip", "install", "--disable-pip-version-check", *args)
 
-    # Install the same locked, hash-checked dependency set as the main environment,
+    # Install the same locked dependency set as the main environment, the same way,
     # then add the wheel itself without letting pip resolve anything else.
     requirements = env("REQUIREMENTS_FILE")
     if requirements:
-        if is_pylock(requirements):
+        source = (
+            export_uv_lock(requirements) if is_uv_lock(requirements) else requirements
+        )
+        hashed = flag("REQUIRE_HASHES", default=True) and not is_pylock(requirements)
+        command = [*(["--require-hashes"] if hashed else []), "-r", source]
+        if env("INSTALLER", "pip") == "uv":
             locked = python(
-                "-m",
-                "uv",
-                "pip",
-                "install",
-                "--python",
-                interpreter,
-                "-r",
-                requirements,
+                "-m", "uv", "pip", "install", "--python", interpreter, *command
             )
         else:
-            source = (
-                export_uv_lock(requirements)
-                if is_uv_lock(requirements)
-                else requirements
-            )
-            hashed = is_uv_lock(requirements) or flag("REQUIRE_HASHES", default=True)
-            locked = venv_install(
-                *(["--require-hashes"] if hashed else []), "-r", source
-            )
+            locked = venv_install(*command)
         if locked:
             raise SystemExit(
                 "Could not install requirements-file into the wheel-test environment"
             )
-        if venv_install("--no-deps", wheels[0]):
+        # A lock may install the project itself from the source tree (pip lock writes
+        # it as a directory entry); --force-reinstall puts the built wheel in its place.
+        if venv_install("--no-deps", "--force-reinstall", wheels[0]):
             raise SystemExit("Could not install the built wheel")
-        if venv_run("-m", "pip", "check"):
+        unmet = unmet_requirements(interpreter, wheels[0])
+        if unmet:
+            print("\n".join(unmet))
             raise SystemExit(
                 "The wheel's dependencies are not satisfied by requirements-file; "
                 "add them to the lock"
@@ -679,17 +690,8 @@ def test_wheel(outdir: str) -> int:
         if venv_install(target):
             raise SystemExit("Could not install the built wheel")
     pytest_runner = env("TEST_RUNNER", "unittest") == "pytest"
-    has_pytest = (
-        subprocess.run(
-            [interpreter, "-c", "import pytest"], check=False, capture_output=True
-        ).returncode
-        == 0
-    )
-    if (
-        pytest_runner
-        and not has_pytest
-        and venv_install("-q", "pytest==" + env("PYTEST_VERSION"))
-    ):
+    # The same pytest as the main tests, even when the lock pins another one.
+    if pytest_runner and venv_install("-q", "pytest==" + env("PYTEST_VERSION")):
         raise SystemExit("Could not install pytest for the wheel tests")
     # Copy only the tests and the pytest configuration, so imports resolve to the
     # installed wheel rather than the source tree.

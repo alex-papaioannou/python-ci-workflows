@@ -1353,6 +1353,84 @@ class WheelTests(StepHarness, unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertIn("Testing lockedpkg-1.0", result.stdout)
 
+    def test_wheel_replaces_a_copy_of_the_project_from_the_lock(self):
+        # pip lock writes the project itself as a directory entry. The tests must still
+        # import the built wheel, not the copy installed from the source tree.
+        files = self.files("VALUE = 1\n")
+        files["pylock.toml"] = (
+            'lock-version = "1.0"\ncreated-by = "pip"\n\n'
+            '[[packages]]\nname = "wheelpkg"\ndirectory = { path = "." }\n'
+        )
+        files["tests/test_source.py"] = (
+            "import importlib.metadata\nimport json\nimport unittest\n\n\n"
+            "class T(unittest.TestCase):\n    def test_from_wheel(self):\n"
+            "        dist = importlib.metadata.distribution('wheelpkg')\n"
+            "        url = json.loads(dist.read_text('direct_url.json'))['url']\n"
+            "        self.assertTrue(url.endswith('.whl'), url)\n"
+        )
+        env = {
+            "REQUIREMENTS_FILE": "pylock.toml",
+            "INSTALLER": "uv",
+            "TEST_WHEEL": "true",
+        }
+        result = self.execute(
+            files,
+            env,
+            step="Build and check package",
+            executable=self.venv_with("uv==0.13.4"),
+        )
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
+    def test_wheel_tests_honour_require_hashes_false_for_a_uv_lock(self):
+        # A path source exports without a hash, so only an unhashed install works.
+        fixture = Path(__file__).parent / "fixtures/wheel-path-lock"
+        files = {
+            path.relative_to(fixture).as_posix(): path.read_text()
+            for path in fixture.rglob("*")
+            if path.is_file()
+        }
+        files.update(
+            {
+                "README.md": "Fixture\n",
+                "pathpkg/__init__.py": "from localdep import VALUE\n",
+                "tests/test_path.py": (
+                    "import unittest\n\nfrom pathpkg import VALUE\n\n\n"
+                    "class T(unittest.TestCase):\n    def test_value(self):\n"
+                    "        self.assertEqual(VALUE, 1)\n"
+                ),
+            }
+        )
+        env = {
+            "REQUIREMENTS_FILE": "uv.lock",
+            "INSTALLER": "uv",
+            "REQUIRE_HASHES": "false",
+            "TEST_WHEEL": "true",
+        }
+        result = self.execute(
+            files,
+            env,
+            step="Build and check package",
+            executable=self.venv_with("uv==0.13.4"),
+        )
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn("Testing pathpkg-1.0", result.stdout)
+
+    def test_wheel_tests_use_pytest_version_over_a_locked_pytest(self):
+        files = self.files("VALUE = 1\n")
+        files["requirements.txt"] = "pytest==8.4.2\n"
+        files["tests/test_pkg.py"] = (
+            "import pytest\n\n\ndef test_version():\n"
+            "    assert pytest.__version__ == '9.1.1'\n"
+        )
+        env = {
+            "REQUIREMENTS_FILE": "requirements.txt",
+            "REQUIRE_HASHES": "false",
+            "TEST_WHEEL": "true",
+            **PYTEST,
+        }
+        result = self.execute(files, env, step="Build and check package")
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
     def test_wheel_tests_fail_when_the_lock_misses_a_dependency(self):
         files = self.files("VALUE = 1\n")
         files["pyproject.toml"] = files["pyproject.toml"].replace(
@@ -1568,6 +1646,24 @@ def load_steps():
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module
+
+
+class UnmetRequirementsTests(unittest.TestCase):
+    def test_only_the_wheels_own_requirements_count(self):
+        steps = load_steps()
+        report = (
+            "flake8 7.0.0 has requirement pycodestyle<2.12.0,>=2.11.0, but you have "
+            "pycodestyle 2.12.1.\n"
+            "My_Pkg 1.0 requires iniconfig, which is not installed.\n"
+        )
+        done = subprocess.CompletedProcess([], 1, stdout=report, stderr="")
+        with unittest.mock.patch.object(steps.subprocess, "run", return_value=done):
+            unmet = steps.unmet_requirements(
+                "python", "dist/my_pkg-1.0-py3-none-any.whl"
+            )
+        self.assertEqual(
+            unmet, ["My_Pkg 1.0 requires iniconfig, which is not installed."]
+        )
 
 
 class RecordingResultTests(unittest.TestCase):

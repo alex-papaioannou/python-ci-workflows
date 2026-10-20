@@ -9,3 +9,6 @@ description = "Fixture whose dependency is locked below its newest release."
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = ["iniconfig>=2.0"]
+
+[tool.uv]
+exclude-newer = "2025-04-02T00:00:00Z"
