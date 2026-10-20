@@ -1154,11 +1154,15 @@ class DoctestAndTimingTests(StepHarness, unittest.TestCase):
         }
         result = self.execute(files, {"DOCTEST_PATHS": '["tools.py"]'})
         self.assertNotEqual(result.returncode, 0)
-        self.assertIn("tools", result.stderr)
+        self.assertIn("Malformed doctest in module tools", result.stderr)
 
     def test_doctest_paths_that_cannot_run_are_rejected_by_name(self):
         cases = (
-            ({"my-scripts/tool.py": ""}, '["my-scripts"]', "my-scripts/tool.py"),
+            (
+                {"my-scripts/tool.py": ""},
+                '["my-scripts/tool.py"]',
+                "is not importable as a module",
+            ),
             ({"notes.txt": ""}, '["notes.txt"]', "is not a .py file"),
         )
         for files, paths, message in cases:
@@ -1170,6 +1174,18 @@ class DoctestAndTimingTests(StepHarness, unittest.TestCase):
                 )
                 self.assertNotEqual(result.returncode, 0)
                 self.assertIn(message, result.stderr)
+
+    def test_directory_entries_warn_about_files_they_cannot_import(self):
+        files = {
+            "tests/test_ok.py": "",
+            "pkg/mod.py": "",
+            "my-scripts/tool.py": "",
+            ".github/scripts/release.py": "",
+        }
+        result = self.execute(files, {"DOCTEST_PATHS": '["."]'}, step="Validate inputs")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("::warning::doctest-paths entry '.' skips files", result.stdout)
+        self.assertIn("my-scripts/tool.py", result.stdout)
 
     def test_doctest_paths_outside_working_directory_are_rejected(self):
         files = {"app/tests/test_ok.py": "", "shared/util.py": ""}
@@ -1185,11 +1201,12 @@ class DoctestAndTimingTests(StepHarness, unittest.TestCase):
     def test_python_versions_below_the_floor_warn(self):
         result = self.execute(
             {"tests/test_ok.py": ""},
-            {"PYTHON_VERSIONS": '["3.10", "3.13"]'},
+            {"PYTHON_VERSIONS": '["3.10", "pypy3.10", "3.13"]'},
             step="Validate inputs",
         )
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn("::warning::python-versions lists 3.10", result.stdout)
+        self.assertIn("::warning::python-versions lists pypy3.10", result.stdout)
 
     def test_summary_lists_slowest_tests(self):
         tests = "import time, unittest\n\n\nclass T(unittest.TestCase):\n    def test_slow(self):\n        time.sleep(0.2)\n\n    def test_fast(self):\n        pass\n"

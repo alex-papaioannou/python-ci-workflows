@@ -130,7 +130,7 @@ def matrix_cell() -> dict[str, str]:
                 "in python-versions"
             )
     for version in versions:
-        match = re.match(r"(\d+)\.(\d+)", version)
+        match = re.search(r"(\d+)\.(\d+)", version)
         if match and (int(match.group(1)), int(match.group(2))) < (3, 11):
             print(
                 f"::warning::python-versions lists {version}; the workflow supports "
@@ -739,22 +739,39 @@ def module_names(paths: list[str]) -> list[str]:
 
 
 def validate_doctest_paths() -> None:
-    """Reject doctest paths that would be skipped or crash instead of running."""
+    """Reject doctest paths that would crash or be skipped instead of running.
+
+    An explicit file must be an importable module. Inside a directory, files that
+    cannot be imported (for example under .github or a hyphenated directory) are
+    skipped with a warning, as before, but no longer silently.
+    """
     for path in json.loads(env("DOCTEST_PATHS", "[]")):
         target = Path(path)
         if not target.resolve().is_relative_to(Path.cwd().resolve()):
             raise SystemExit(
                 f"doctest-paths entry {path!r} is outside working-directory"
             )
-        if target.is_file() and target.suffix != ".py":
-            raise SystemExit(f"doctest-paths entry {path!r} is not a .py file")
-        for file in doctest_files(path):
-            if module_name(file) is None:
+        if target.is_file():
+            if target.suffix != ".py":
+                raise SystemExit(f"doctest-paths entry {path!r} is not a .py file")
+            if module_name(target) is None:
                 raise SystemExit(
-                    f"doctest-paths entry {path!r} contains {file.as_posix()}, which is not "
-                    "importable as a module from working-directory (each directory and file "
-                    "name must be a valid Python identifier)"
+                    f"doctest-paths entry {path!r} is not importable as a module from "
+                    "working-directory (each directory and file name must be a valid "
+                    "Python identifier)"
                 )
+            continue
+        skipped = [
+            file.as_posix() for file in doctest_files(path) if module_name(file) is None
+        ]
+        if skipped:
+            shown = ", ".join(skipped[:5]) + (
+                f" and {len(skipped) - 5} more" if len(skipped) > 5 else ""
+            )
+            print(
+                f"::warning::doctest-paths entry {path!r} skips files that are not "
+                f"importable as modules: {shown}"
+            )
 
 
 def doctest_suite() -> unittest.TestSuite:
@@ -763,8 +780,10 @@ def doctest_suite() -> unittest.TestSuite:
 
     suite = unittest.TestSuite()
     for name in module_names(json.loads(env("DOCTEST_PATHS", "[]"))):
-        # A malformed example raises ValueError naming the module; let it fail the run.
-        suite.addTest(doctest.DocTestSuite(importlib.import_module(name)))
+        try:
+            suite.addTest(doctest.DocTestSuite(importlib.import_module(name)))
+        except ValueError as error:  # a malformed example
+            raise SystemExit(f"Malformed doctest in module {name}: {error}") from None
     return suite
 
 

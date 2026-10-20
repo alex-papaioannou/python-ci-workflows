@@ -44,11 +44,15 @@ major tag such as `v1`, an exact release, or a commit SHA.
 
 - A malformed doctest under `doctest-paths` now fails the run with unittest; it
   used to be skipped silently.
-- `doctest-paths` entries that cannot run (outside `working-directory`, not `.py`,
-  or under a directory whose name is not a valid module name) are rejected by
-  validation instead of being skipped or crashing the test step.
+- `doctest-paths` file entries that cannot run (outside `working-directory`, not
+  `.py`, or not importable because a directory or file name is not a valid module
+  name) are rejected by validation instead of being skipped or crashing the test
+  step. Directory entries still skip such files, now with a warning that lists them.
 
 ### Behaviour changes
+
+- A `doctest-paths` file entry that is not importable, such as one under a
+  hyphenated directory, now fails validation; it used to be skipped silently.
 
 - Artifact names for calls with a `working-directory` other than `.`, or with a
   `call-name`, end in `-<call-name>` or `-<working-directory>`. Single calls from
