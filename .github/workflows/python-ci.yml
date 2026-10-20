@@ -106,6 +106,10 @@ on:
         description: "Build an sdist and wheel and validate their metadata"
         type: boolean
         default: false
+      call-name:
+        description: "Optional name that tells apart several calls of this workflow from one caller workflow"
+        type: string
+        default: ""
       cancel-in-progress:
         description: "Cancel this job when a newer run starts for the same ref"
         type: boolean
@@ -166,7 +170,7 @@ jobs:
     timeout-minutes: ${{ inputs.timeout-minutes }}
     continue-on-error: ${{ contains(fromJSON(inputs.experimental-python-versions), matrix.python-version) }}
     concurrency:
-      group: ${{ inputs.cancel-in-progress && format('python-ci-{0}-{1}-{2}-{3}', github.workflow, github.ref, matrix.os, matrix.python-version) || format('python-ci-{0}-{1}-{2}-{3}', github.run_id, github.run_attempt, matrix.os, matrix.python-version) }}
+      group: ${{ inputs.cancel-in-progress && format('python-ci-{0}-{1}-{2}-{3}-{4}-{5}', github.workflow, github.ref, inputs.working-directory, inputs.call-name, matrix.os, matrix.python-version) || format('python-ci-{0}-{1}-{2}-{3}-{4}-{5}', github.run_id, github.run_attempt, inputs.working-directory, inputs.call-name, matrix.os, matrix.python-version) }}
       cancel-in-progress: ${{ inputs.cancel-in-progress }}
     defaults:
       run:
@@ -213,6 +217,7 @@ jobs:
           TEST_RUNNER: ${{ inputs.test-runner }}
           PYTEST_VERSION: ${{ inputs.pytest-version }}
           PYTEST_ARGS: ${{ inputs.pytest-args }}
+          CALL_NAME: ${{ inputs.call-name }}
           INSTALL_PROJECT: ${{ inputs.install-project }}
           PROJECT_EXTRAS: ${{ inputs.project-extras }}
           INSTALLER: ${{ inputs.installer }}
