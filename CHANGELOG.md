@@ -13,7 +13,8 @@ major tag such as `v1`, an exact release, or a commit SHA.
   `python_files`, so `testpaths`, `python_files` and pytest's `*_test.py` default
   apply. The defaults are unchanged for now; they still override that configuration.
 - Warnings for experimental versions missing from `python-versions`, an
-  all-experimental matrix, and Python versions given as JSON numbers.
+  all-experimental matrix, Python versions given as JSON numbers, and Python
+  versions older than 3.11, the oldest supported version.
 
 ### Fixed
 
@@ -40,6 +41,12 @@ major tag such as `v1`, an exact release, or a commit SHA.
 - Coverage now includes code run in subprocesses and pytest-xdist workers
   (coverage.py 7.10.3 or later). Under `pytest -n` it used to report 0%, failing
   any threshold and crashing with `warnings-as-errors`.
+
+- A malformed doctest under `doctest-paths` now fails the run with unittest; it
+  used to be skipped silently.
+- `doctest-paths` entries that cannot run (outside `working-directory`, not `.py`,
+  or under a directory whose name is not a valid module name) are rejected by
+  validation instead of being skipped or crashing the test step.
 
 ### Behaviour changes
 

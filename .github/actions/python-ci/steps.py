@@ -129,6 +129,13 @@ def matrix_cell() -> dict[str, str]:
                 f"::warning::experimental-python-versions lists {version}, which is not "
                 "in python-versions"
             )
+    for version in versions:
+        match = re.match(r"(\d+)\.(\d+)", version)
+        if match and (int(match.group(1)), int(match.group(2))) < (3, 11):
+            print(
+                f"::warning::python-versions lists {version}; the workflow supports "
+                "Python 3.11 and later, and its tools may not install on older versions"
+            )
     stable = [v for v in versions if v not in experimental]
     if versions and not stable:
         print(
@@ -172,6 +179,7 @@ def validate() -> int:
     validate_path_list("LINT_PATHS", "lint-paths", "Lint target")
     if env("DOCTEST_PATHS", "[]") != "[]":
         validate_path_list("DOCTEST_PATHS", "doctest-paths", "Doctest target")
+        validate_doctest_paths()
     for name, example in (("RUFF", "0.6.9"), ("MYPY", "1.11.2"), ("COVERAGE", "7.6.1")):
         if not VERSION.fullmatch(env(f"{name}_VERSION")):
             raise SystemExit(
@@ -701,21 +709,52 @@ def write_junit(path: str, records: list[Record], counts: dict[str, int]) -> Non
     ET.ElementTree(suite).write(path, encoding="utf-8", xml_declaration=True)
 
 
+def doctest_files(path: str) -> list[Path]:
+    target = Path(path)
+    return sorted(target.rglob("*.py")) if target.is_dir() else [target]
+
+
+def module_name(file: Path) -> str | None:
+    """Return the importable module name of a file under the working directory."""
+    resolved = file.resolve()
+    root = Path.cwd().resolve()
+    if not resolved.is_relative_to(root):
+        return None
+    parts = list(resolved.relative_to(root).with_suffix("").parts)
+    if parts and parts[-1] == "__init__":
+        parts.pop()
+    if not parts or not all(part.isidentifier() for part in parts):
+        return None
+    return ".".join(parts)
+
+
 def module_names(paths: list[str]) -> list[str]:
     """Translate files and directories under the working directory into module names."""
-    files: list[Path] = []
-    for path in map(Path, paths):
-        files.extend(sorted(path.rglob("*.py")) if path.is_dir() else [path])
-    names = []
-    for file in files:
-        parts = list(
-            file.resolve().relative_to(Path.cwd().resolve()).with_suffix("").parts
-        )
-        if parts[-1] == "__init__":
-            parts.pop()
-        if parts and all(part.isidentifier() for part in parts):
-            names.append(".".join(parts))
-    return names
+    return [
+        name
+        for path in paths
+        for file in doctest_files(path)
+        if (name := module_name(file))
+    ]
+
+
+def validate_doctest_paths() -> None:
+    """Reject doctest paths that would be skipped or crash instead of running."""
+    for path in json.loads(env("DOCTEST_PATHS", "[]")):
+        target = Path(path)
+        if not target.resolve().is_relative_to(Path.cwd().resolve()):
+            raise SystemExit(
+                f"doctest-paths entry {path!r} is outside working-directory"
+            )
+        if target.is_file() and target.suffix != ".py":
+            raise SystemExit(f"doctest-paths entry {path!r} is not a .py file")
+        for file in doctest_files(path):
+            if module_name(file) is None:
+                raise SystemExit(
+                    f"doctest-paths entry {path!r} contains {file.as_posix()}, which is not "
+                    "importable as a module from working-directory (each directory and file "
+                    "name must be a valid Python identifier)"
+                )
 
 
 def doctest_suite() -> unittest.TestSuite:
@@ -724,10 +763,8 @@ def doctest_suite() -> unittest.TestSuite:
 
     suite = unittest.TestSuite()
     for name in module_names(json.loads(env("DOCTEST_PATHS", "[]"))):
-        try:
-            suite.addTest(doctest.DocTestSuite(importlib.import_module(name)))
-        except ValueError:  # Python 3.9 and 3.10 reject modules without docstrings
-            continue
+        # A malformed example raises ValueError naming the module; let it fail the run.
+        suite.addTest(doctest.DocTestSuite(importlib.import_module(name)))
     return suite
 
 

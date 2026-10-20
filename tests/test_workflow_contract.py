@@ -35,6 +35,7 @@ class StepHarness:
         env=None,
         step="Run tests and reject empty test suites",
         executable=sys.executable,
+        working_directory=".",
     ):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -50,7 +51,7 @@ class StepHarness:
             return subprocess.run(
                 [executable, str(STEPS), script(step)],
                 check=False,
-                cwd=root,
+                cwd=root / working_directory,
                 env=process_env,
                 text=True,
                 capture_output=True,
@@ -1145,6 +1146,50 @@ class DoctestAndTimingTests(StepHarness, unittest.TestCase):
             step="Validate inputs",
         )
         self.assertNotEqual(result.returncode, 0)
+
+    def test_malformed_doctest_fails_and_names_the_module(self):
+        files = {
+            "tools.py": 'def f():\n    """\n    >>>f()\n    """\n',
+            "tests/test_none.py": "",
+        }
+        result = self.execute(files, {"DOCTEST_PATHS": '["tools.py"]'})
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("tools", result.stderr)
+
+    def test_doctest_paths_that_cannot_run_are_rejected_by_name(self):
+        cases = (
+            ({"my-scripts/tool.py": ""}, '["my-scripts"]', "my-scripts/tool.py"),
+            ({"notes.txt": ""}, '["notes.txt"]', "is not a .py file"),
+        )
+        for files, paths, message in cases:
+            with self.subTest(paths=paths):
+                result = self.execute(
+                    {"tests/test_ok.py": "", **files},
+                    {"DOCTEST_PATHS": paths},
+                    step="Validate inputs",
+                )
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn(message, result.stderr)
+
+    def test_doctest_paths_outside_working_directory_are_rejected(self):
+        files = {"app/tests/test_ok.py": "", "shared/util.py": ""}
+        result = self.execute(
+            files,
+            {"DOCTEST_PATHS": '["../shared/util.py"]'},
+            step="Validate inputs",
+            working_directory="app",
+        )
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("outside working-directory", result.stderr)
+
+    def test_python_versions_below_the_floor_warn(self):
+        result = self.execute(
+            {"tests/test_ok.py": ""},
+            {"PYTHON_VERSIONS": '["3.10", "3.13"]'},
+            step="Validate inputs",
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("::warning::python-versions lists 3.10", result.stdout)
 
     def test_summary_lists_slowest_tests(self):
         tests = "import time, unittest\n\n\nclass T(unittest.TestCase):\n    def test_slow(self):\n        time.sleep(0.2)\n\n    def test_fast(self):\n        pass\n"
