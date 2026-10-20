@@ -18,6 +18,10 @@ on:
         description: "JSON array of matrix Python versions whose failures do not fail the run"
         type: string
         default: "[]"
+      matrix-exclude:
+        description: "JSON array of {os, python-version} objects naming matrix cells to skip"
+        type: string
+        default: "[]"
       operating-systems:
         description: "JSON array of runner labels, label arrays or runner-group objects"
         type: string
@@ -189,6 +193,7 @@ jobs:
       matrix:
         os: ${{ fromJSON(inputs.operating-systems) }}
         python-version: ${{ fromJSON(inputs.python-versions) }}
+        exclude: ${{ fromJSON(inputs.matrix-exclude) }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -208,6 +213,7 @@ jobs:
           OPERATING_SYSTEMS: ${{ inputs.operating-systems }}
           PYTHON_VERSIONS: ${{ inputs.python-versions }}
           EXPERIMENTAL_PYTHON_VERSIONS: ${{ inputs.experimental-python-versions }}
+          MATRIX_EXCLUDE: ${{ inputs.matrix-exclude }}
           MATRIX_OS: ${{ toJSON(matrix.os) }}
           MATRIX_PYTHON: ${{ matrix.python-version }}
           TEST_DIRECTORY: ${{ inputs.test-directory }}
@@ -285,6 +291,13 @@ jobs:
           TEST_DIRECTORY: ${{ inputs.test-directory }}
           TEST_PATTERN: ${{ inputs.test-pattern }}
         run: python "$PYTHON_CI_STEPS" build
+      - name: Upload distributions
+        if: inputs.build-package && steps.validate.outputs.primary == 'true'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: dist${{ steps.validate.outputs.artifact-suffix }}
+          path: ${{ runner.temp }}/python-ci-dist
+          if-no-files-found: error
       - name: Install test tools
         if: inputs.coverage-version != '' || inputs.test-runner == 'pytest'
         env:

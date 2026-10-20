@@ -8,6 +8,10 @@ major tag such as `v1`, an exact release, or a commit SHA.
 ### Added
 
 - `call-name` input to tell apart several calls from one caller workflow.
+- `matrix-exclude` input to skip matrix cells, validated against the matrix.
+- The built distributions are uploaded as the `dist` artifact after a successful
+  `build-package`, so a job in the calling workflow can publish them; the README
+  shows a trusted-publishing recipe.
 - `result-runner` input to choose the runner of the final `result` job, which no
   longer needs Python or the step scripts: a label, a JSON array of labels, or a
   runner-group object.

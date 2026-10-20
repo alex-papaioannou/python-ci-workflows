@@ -121,6 +121,54 @@ def runner_slug(label) -> str:
     return re.sub(r'[/\\:<>|*?"\s]+', "-", "-".join(str(part) for part in parts))
 
 
+def check_matrix_exclude(
+    systems: list, versions: list[str], primary_version: str
+) -> None:
+    """Validate matrix-exclude against the matrix it trims."""
+    excluded = json_list("MATRIX_EXCLUDE", "[]")
+    cells = {(json.dumps(s, sort_keys=True), v) for s in systems for v in versions}
+    for entry in excluded:
+        if (
+            not isinstance(entry, dict)
+            or not entry
+            or set(entry) - {"os", "python-version"}
+        ):
+            raise SystemExit(
+                f"matrix-exclude entry {json.dumps(entry)} must be an object with only "
+                "'os' and/or 'python-version' keys"
+            )
+        if "os" in entry and entry["os"] not in systems:
+            raise SystemExit(
+                f"matrix-exclude entry {json.dumps(entry)} names an os not in operating-systems"
+            )
+        if "python-version" in entry and str(entry["python-version"]) not in versions:
+            raise SystemExit(
+                f"matrix-exclude entry {json.dumps(entry)} names a version not in python-versions"
+            )
+        cells = {
+            (system, version)
+            for system, version in cells
+            if not (
+                ("os" not in entry or json.dumps(entry["os"], sort_keys=True) == system)
+                and (
+                    "python-version" not in entry
+                    or str(entry["python-version"]) == version
+                )
+            )
+        }
+    if excluded and not cells:
+        raise SystemExit("matrix-exclude removes every matrix cell")
+    if (
+        excluded
+        and systems
+        and (json.dumps(systems[0], sort_keys=True), primary_version) not in cells
+    ):
+        raise SystemExit(
+            "matrix-exclude removes the primary cell (the first operating system with the "
+            "first non-experimental Python version), which runs Ruff, pip-audit and the build"
+        )
+
+
 def matrix_cell() -> dict[str, str]:
     """Describe this job's matrix cell and whether it runs the once-per-run checks.
 
@@ -155,6 +203,7 @@ def matrix_cell() -> dict[str, str]:
             "experimental-python-versions, so no failure can fail the run"
         )
     primary_version = (stable or versions)[0] if versions else ""
+    check_matrix_exclude(systems, versions, primary_version)
     if not env("MATRIX_PYTHON"):
         # Outside a matrix (for example a local run), this is the only cell.
         return {
@@ -490,10 +539,19 @@ def compile_sources() -> int:
     return 0 if ok else 1
 
 
+DIST_DIRECTORY = "python-ci-dist"
+
+
 def build() -> int:
+    import shutil
+
     tool("build==1.6.1", "build")
     tool("twine==7.0.0", "twine")
-    outdir = scratch_dir("dist-")
+    # A fixed directory under RUNNER_TEMP, so the workflow can upload it afterwards.
+    outdir = os.path.join(
+        os.environ.get("RUNNER_TEMP") or tempfile.gettempdir(), DIST_DIRECTORY
+    )
+    shutil.rmtree(outdir, ignore_errors=True)
     if python("-m", "build", "--outdir", outdir, "."):
         raise SystemExit("Package build failed")
     if python(
