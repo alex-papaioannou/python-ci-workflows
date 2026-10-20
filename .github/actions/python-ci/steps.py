@@ -199,11 +199,20 @@ def warn_about_inputs_without_effect() -> None:
         )
 
 
+def check_directory(variable: str, label: str) -> None:
+    value = env(variable)
+    if value and not inside(value).is_dir():
+        raise SystemExit(f"{label} must name an existing directory")
+
+
+def check_version(variable: str, label: str, example: str) -> None:
+    if not VERSION.fullmatch(env(variable)):
+        raise SystemExit(f"{label} must be empty or a version such as {example}")
+
+
 def validate() -> int:
-    for key in ("TEST_DIRECTORY", "TOP_LEVEL_DIRECTORY"):
-        value = env(key)
-        if value and not inside(value).is_dir():
-            raise SystemExit(f"{key} must name an existing directory")
+    check_directory("TEST_DIRECTORY", "test-directory")
+    check_directory("TOP_LEVEL_DIRECTORY", "top-level-directory")
     requirements = env("REQUIREMENTS_FILE")
     if requirements and not inside(requirements).is_file():
         raise SystemExit("requirements-file must name an existing file")
@@ -212,11 +221,9 @@ def validate() -> int:
     if env("DOCTEST_PATHS", "[]") != "[]":
         validate_path_list("DOCTEST_PATHS", "doctest-paths", "Doctest target")
         validate_doctest_paths()
-    for name, example in (("RUFF", "0.6.9"), ("MYPY", "1.11.2"), ("COVERAGE", "7.6.1")):
-        if not VERSION.fullmatch(env(f"{name}_VERSION")):
-            raise SystemExit(
-                f"{name.lower()}-version must be empty or a version such as {example}"
-            )
+    check_version("RUFF_VERSION", "ruff-version", "0.6.9")
+    check_version("MYPY_VERSION", "mypy-version", "1.11.2")
+    check_version("COVERAGE_VERSION", "coverage-version", "7.6.1")
     try:
         fail_under = float(env("COVERAGE_FAIL_UNDER", "0"))
     except ValueError:
@@ -510,22 +517,22 @@ def test_wheel(outdir: str) -> int:
         workdir, "venv", "Scripts" if os.name == "nt" else "bin", "python"
     )
 
-    def run(*args: str, cwd: str | None = None) -> int:
+    def venv_run(*args: str, cwd: str | None = None) -> int:
         return subprocess.run([interpreter, *args], check=False, cwd=cwd).returncode
 
-    def install(*args: str) -> int:
-        return run("-m", "pip", "install", "--disable-pip-version-check", *args)
+    def venv_install(*args: str) -> int:
+        return venv_run("-m", "pip", "install", "--disable-pip-version-check", *args)
 
     requirements = env("REQUIREMENTS_FILE")
     if requirements and Path(requirements).suffix == ".txt":
         hashes = ["--require-hashes"] if flag("REQUIRE_HASHES", default=True) else []
-        if install(*hashes, "-r", requirements):
+        if venv_install(*hashes, "-r", requirements):
             return 1
     target = wheels[0] + (f"[{','.join(extras())}]" if extras() else "")
-    if install(target):
+    if venv_install(target):
         raise SystemExit("Could not install the built wheel")
     pytest_runner = env("TEST_RUNNER", "unittest") == "pytest"
-    if pytest_runner and install("-q", "pytest==" + env("PYTEST_VERSION")):
+    if pytest_runner and venv_install("-q", "pytest==" + env("PYTEST_VERSION")):
         raise SystemExit("Could not install pytest for the wheel tests")
     # Copy only the tests and the pytest configuration, so imports resolve to the
     # installed wheel rather than the source tree.
@@ -546,8 +553,10 @@ def test_wheel(outdir: str) -> int:
     print(f"Testing {os.path.basename(wheels[0])} in a clean environment")
     if pytest_runner:
         files = ["-o", f"python_files={pattern}"] if pattern else []
-        return run("-m", "pytest", directory, *files, "-p", "no:cacheprovider", cwd=cwd)
-    return run(
+        return venv_run(
+            "-m", "pytest", directory, *files, "-p", "no:cacheprovider", cwd=cwd
+        )
+    return venv_run(
         "-m",
         "unittest",
         "discover",
