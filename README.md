@@ -76,7 +76,7 @@ inside the checkout. JSON arrays are passed as strings.
 | `allow-prereleases` | boolean | `false` | Let `setup-python` install alpha, beta and release-candidate versions. |
 | `experimental-python-versions` | string | `[]` | JSON array of matrix versions whose failures do not fail the run. |
 | `max-parallel` | number | `3` | Maximum simultaneous matrix jobs. |
-| `timeout-minutes` | number | `10` | Per-job timeout, a whole number from 1 to 360. |
+| `timeout-minutes` | number | `10` | Per-job timeout in minutes. GitHub-hosted runners stop jobs after 360 minutes regardless. |
 | `cancel-in-progress` | boolean | `false` | Cancel older in-flight jobs for the same workflow, ref and call when a new run starts. |
 | `call-name` | string | `""` | Name for this call when one caller workflow calls the workflow more than once with the same `working-directory`. Letters, digits, `.`, `_` and `-`. |
 | `working-directory` | string | `.` | Project directory inside the checkout, for monorepos. |
@@ -85,10 +85,10 @@ inside the checkout. JSON arrays are passed as strings.
 
 | Input | Type | Default | Description |
 | --- | --- | --- | --- |
-| `requirements-file` | string | `""` | Locked dependencies installed before checks, with pip caching keyed on the file. A requirements `.txt` works with either installer. With `installer: uv` it may also be a `uv.lock` (exported with `project-extras` and the default groups) or a `pylock.toml`. |
-| `install-project` | boolean | `false` | `pip install --editable .` after requirements. With a `requirements-file`, dependencies are assumed locked and installed with `--no-deps`. |
+| `requirements-file` | string | `""` | Locked dependencies installed before checks. With the pip installer, pip's download cache is saved between runs, keyed on this file. A requirements `.txt` works with either installer. With `installer: uv` it may also be a `uv.lock` (exported with `project-extras` and the default groups) or a `pylock.toml`. |
+| `install-project` | boolean | `false` | `pip install --editable .` after requirements. With a `requirements-file`, dependencies are assumed locked and installed with `--no-deps`. pip's download cache is keyed on `pyproject.toml` when there is no `requirements-file`. |
 | `project-extras` | string | `""` | Comma-separated extras installed with the project, such as `test,dev`. |
-| `installer` | string | `pip` | `pip` or `uv`. uv installs into the same interpreter and is much faster on large dependency sets. |
+| `installer` | string | `pip` | `pip` or `uv`. uv installs into the same interpreter and is much faster on large dependency sets. uv's own cache is not saved between runs. |
 | `uv-version` | string | `0.13.4` | uv version used when `installer` is `uv`. |
 | `require-hashes` | boolean | `true` | Install with `--require-hashes`. Generate files with `pip-compile --generate-hashes` or `uv pip compile --generate-hashes`. |
 
@@ -200,7 +200,8 @@ Each matrix job runs these steps in order. Steps for features you have not enabl
 are skipped.
 
 1. Check out the caller's repository without persisting credentials.
-2. Set up Python, with pip caching when `requirements-file` is set.
+2. Set up Python, with pip's download cache when `requirements-file` or
+   `install-project` is set. uv's own cache is not saved between runs.
 3. Validate inputs: paths, JSON arrays, versions, globs and regexes. Bad
    configuration fails here, before any project code runs.
 4. Install requirements and the project, then audit them.
