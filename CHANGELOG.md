@@ -38,5 +38,5 @@ First tagged release.
 ### Security
 
 - Releases and the moving major tag are published by a workflow from the changelog.
-- Third-party actions pinned to commit SHAs, with Dependabot updates.
+- Third-party actions pinned to commit SHAs.
 - Workflow files linted with actionlint and zizmor.

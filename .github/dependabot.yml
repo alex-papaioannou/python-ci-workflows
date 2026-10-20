@@ -1,4 +1,22 @@
+version: 2
+updates:
+  # SHA-pinned actions in .github/workflows. The composite action in
+  # .github/actions/python-ci uses no third-party actions.
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    cooldown:
+      default-days: 7
+    groups:
+      actions:
+        patterns: ["*"]
+  # requirements-dev.txt (compiled from requirements-dev.in with hashes).
+  # tests/fixtures and examples are left out on purpose: their lock files pin
+  # iniconfig==2.1.0, which tests/test_workflow_contract.py expects.
   - package-ecosystem: pip
     directory: /
     schedule:
       interval: weekly
+    cooldown:
+      default-days: 7
