@@ -937,10 +937,15 @@ def test() -> int:
             # Merge the data written by subprocesses and pytest-xdist workers.
             cov.combine()
             cov.save()
-        if not cov.get_data().measured_files():
+        data = cov.get_data()
+        # Source files that never ran are recorded too, with no lines, so look for
+        # executed lines rather than for measured files.
+        if not any(data.lines(path) for path in data.measured_files()):
             print(
-                "::warning::Coverage measured no files. Check that the tests import the "
-                "project and that the coverage omit and include settings match it."
+                "::warning::Coverage collected no data. Check that the tests import the "
+                "project, that the coverage omit and include settings match it, and "
+                "that no other tool, such as pytest-cov's --cov option, takes over "
+                "measurement."
             )
         total = cov.report(skip_empty=True, show_missing=True)
         cov.xml_report(outfile="coverage.xml")
