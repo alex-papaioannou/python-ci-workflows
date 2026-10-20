@@ -110,6 +110,14 @@ class WorkflowTests(StepHarness, unittest.TestCase):
         )
         self.assertEqual(result.returncode, 0, result.stderr)
 
+    def test_unittest_treats_empty_inputs_as_its_conventions(self):
+        files = {
+            "tests/test_ok.py": "import unittest\n\n\nclass T(unittest.TestCase):\n    def test_ok(self):\n        pass\n"
+        }
+        result = self.execute(files, {"TEST_DIRECTORY": "", "TEST_PATTERN": ""})
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("Ran 1 test", result.stderr)
+
     def test_explicit_top_level_directory(self):
         result = self.execute(
             {
@@ -526,7 +534,6 @@ class WorkflowTests(StepHarness, unittest.TestCase):
     def test_more_invalid_inputs_rejected(self):
         cases = (
             {"TEST_PATTERN": "tests/test_*.py"},
-            {"TEST_PATTERN": ""},
             {"TEST_FAIL_FAST": "maybe"},
             {"TEST_DIRECTORY": "missing"},
             {"TOP_LEVEL_DIRECTORY": "missing"},
@@ -620,6 +627,46 @@ class PytestRunnerTests(StepHarness, unittest.TestCase):
             },
         )
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
+    def test_empty_inputs_defer_to_pytest_configuration(self):
+        config = '[tool.pytest.ini_options]\ntestpaths = ["src/tests"]\npython_files = ["*_check.py"]\n'
+        files = {
+            "pyproject.toml": config,
+            "src/tests/calc_check.py": "def test_calc():\n    assert 1 + 1 == 2\n",
+            "src/tests/other_check.py": "def test_other():\n    pass\n",
+            "tests/test_ignored.py": "def test_ignored():\n    assert False\n",
+        }
+        empty = {**PYTEST, "TEST_DIRECTORY": "", "TEST_PATTERN": ""}
+        result = self.execute(files, empty)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn("2 passed", result.stdout)
+        files["src/tests/calc_check.py"] = "def test_calc():\n    assert 1 + 1 == 3\n"
+        self.assertNotEqual(self.execute(files, empty).returncode, 0)
+
+    def test_empty_inputs_collect_pytest_default_file_names(self):
+        files = {
+            "tests/test_ok.py": "def test_ok():\n    pass\n",
+            "tests/foo_test.py": "def test_foo():\n    assert False\n",
+        }
+        result = self.execute(
+            files, {**PYTEST, "TEST_DIRECTORY": "", "TEST_PATTERN": ""}
+        )
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("foo_test.py", result.stdout)
+        explicit = self.execute(
+            files, {**PYTEST, "TEST_DIRECTORY": "tests", "TEST_PATTERN": "test*.py"}
+        )
+        self.assertEqual(explicit.returncode, 0, explicit.stdout)
+
+    def test_no_tests_message_names_the_inputs(self):
+        result = self.execute(
+            {"tests/test_none.py": ""},
+            {**PYTEST, "TEST_DIRECTORY": "tests", "TEST_PATTERN": "check_*.py"},
+        )
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn(
+            "test-directory: 'tests', test-pattern: 'check_*.py'", result.stderr
+        )
 
     def test_pytest_inputs_validated(self):
         for env in (

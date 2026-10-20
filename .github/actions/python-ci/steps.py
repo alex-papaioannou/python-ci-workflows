@@ -219,6 +219,11 @@ def validate() -> int:
         raise SystemExit(
             "install-project requires pyproject.toml or setup.py in working-directory"
         )
+    if flag("TEST_WHEEL") and not Path(env("TEST_DIRECTORY") or "tests").is_dir():
+        raise SystemExit(
+            "test-wheel copies test-directory (tests when empty) into a clean "
+            "environment, but that directory does not exist"
+        )
     if flag("TEST_WHEEL") and not flag("BUILD_PACKAGE"):
         raise SystemExit("test-wheel requires build-package: true")
     if flag("BUILD_PACKAGE") and not Path("pyproject.toml").is_file():
@@ -241,9 +246,9 @@ def validate() -> int:
         raise SystemExit("pytest-args requires test-runner: pytest")
     if env("TEST_FAIL_FAST", "false").lower() not in ("true", "false"):
         raise SystemExit("test-fail-fast must be boolean")
-    pattern = env("TEST_PATTERN", "test*.py")
-    if not pattern or "/" in pattern or "\\" in pattern:
-        raise SystemExit("test-pattern must be a nonempty filename glob")
+    pattern = env("TEST_PATTERN")
+    if "/" in pattern or "\\" in pattern:
+        raise SystemExit("test-pattern must be a filename glob, not a path")
     re.compile(env("COMPILE_EXCLUDE"))
     write_outputs({"artifact-suffix": artifact_suffix(), **matrix_cell()})
     return 0
@@ -476,35 +481,36 @@ def test_wheel(outdir: str) -> int:
     pytest_runner = env("TEST_RUNNER", "unittest") == "pytest"
     if pytest_runner and install("-q", "pytest==" + env("PYTEST_VERSION")):
         raise SystemExit("Could not install pytest for the wheel tests")
-    # Copy only the tests, so imports resolve to the installed wheel, not the source tree.
-    tests = os.path.join(workdir, "project", env("TEST_DIRECTORY", "tests"))
-    shutil.copytree(env("TEST_DIRECTORY", "tests"), tests)
+    # Copy only the tests and the pytest configuration, so imports resolve to the
+    # installed wheel rather than the source tree.
+    directory = env("TEST_DIRECTORY") or "tests"
     cwd = os.path.join(workdir, "project")
-    pattern = env("TEST_PATTERN", "test*.py")
+    shutil.copytree(directory, os.path.join(cwd, directory))
+    if pytest_runner:
+        for config in (
+            "pytest.ini",
+            ".pytest.ini",
+            "pyproject.toml",
+            "tox.ini",
+            "setup.cfg",
+        ):
+            if os.path.isfile(config):
+                shutil.copy(config, os.path.join(cwd, config))
+    pattern = env("TEST_PATTERN")
     print(f"Testing {os.path.basename(wheels[0])} in a clean environment")
     if pytest_runner:
-        code = run(
-            "-m",
-            "pytest",
-            env("TEST_DIRECTORY", "tests"),
-            "-o",
-            f"python_files={pattern}",
-            "-p",
-            "no:cacheprovider",
-            cwd=cwd,
-        )
-    else:
-        code = run(
-            "-m",
-            "unittest",
-            "discover",
-            "-s",
-            env("TEST_DIRECTORY", "tests"),
-            "-p",
-            pattern,
-            cwd=cwd,
-        )
-    return code
+        files = ["-o", f"python_files={pattern}"] if pattern else []
+        return run("-m", "pytest", directory, *files, "-p", "no:cacheprovider", cwd=cwd)
+    return run(
+        "-m",
+        "unittest",
+        "discover",
+        "-s",
+        directory,
+        "-p",
+        pattern or "test*.py",
+        cwd=cwd,
+    )
 
 
 def install_test_tools() -> int:
@@ -658,15 +664,24 @@ def doctest_suite() -> unittest.TestSuite:
     return suite
 
 
+def no_tests_message(directory: str, pattern: str) -> str:
+    return (
+        f"No tests discovered (test-directory: {directory!r}, test-pattern: "
+        f"{pattern!r}). Point those inputs at your tests, or leave them empty with "
+        "the pytest runner to use your pytest configuration."
+    )
+
+
 def run_unittest() -> int:
+    # unittest has no project configuration, so empty inputs mean its conventions.
+    directory = env("TEST_DIRECTORY") or "tests"
+    pattern = env("TEST_PATTERN") or "test*.py"
     suite = unittest.defaultTestLoader.discover(
-        env("TEST_DIRECTORY", "tests"),
-        pattern=env("TEST_PATTERN", "test*.py"),
-        top_level_dir=env("TOP_LEVEL_DIRECTORY") or None,
+        directory, pattern=pattern, top_level_dir=env("TOP_LEVEL_DIRECTORY") or None
     )
     suite.addTest(doctest_suite())
     if suite.countTestCases() == 0:
-        raise SystemExit("No tests discovered")
+        raise SystemExit(no_tests_message(directory, pattern))
     runner = unittest.TextTestRunner(
         verbosity=int(env("TEST_VERBOSITY", "2")),
         failfast=flag("TEST_FAIL_FAST"),
@@ -713,10 +728,10 @@ def run_pytest() -> int:
         tempfile.mkdtemp(prefix="pytest-"), "junit.xml"
     )
     verbosity = {"0": ["-q"], "1": [], "2": ["-v"]}[env("TEST_VERBOSITY", "2")]
+    # Empty inputs defer to the project's testpaths and python_files settings.
     args = [
-        env("TEST_DIRECTORY", "tests"),
-        "-o",
-        f"python_files={env('TEST_PATTERN', 'test*.py')}",
+        *([env("TEST_DIRECTORY")] if env("TEST_DIRECTORY") else []),
+        *(["-o", f"python_files={env('TEST_PATTERN')}"] if env("TEST_PATTERN") else []),
         "-p",
         "no:cacheprovider",
         f"--junitxml={report}",
@@ -728,7 +743,7 @@ def run_pytest() -> int:
     ]
     code = int(pytest.main(args))
     if code == pytest.ExitCode.NO_TESTS_COLLECTED:
-        raise SystemExit("No tests discovered")
+        raise SystemExit(no_tests_message(env("TEST_DIRECTORY"), env("TEST_PATTERN")))
     if os.path.exists(report):
         write_summary(*junit_outcomes(report))
     return 0 if code == pytest.ExitCode.OK else 1

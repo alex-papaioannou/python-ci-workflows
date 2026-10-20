@@ -106,8 +106,8 @@ inside the checkout. JSON arrays are passed as strings.
 | `test-runner` | string | `unittest` | `unittest` or `pytest`. |
 | `pytest-version` | string | `9.1.1` | pytest version installed when `test-runner` is `pytest`. |
 | `pytest-args` | string | `""` | Extra pytest arguments, split like a shell command line, for example `-m "not slow" -n auto`. |
-| `test-directory` | string | `tests` | Directory to discover tests in. |
-| `test-pattern` | string | `test*.py` | Filename glob for test modules (pytest's `python_files`). Discovering zero tests fails the job. |
+| `test-directory` | string | `tests` | Directory to discover tests in. Set it to `""` with the pytest runner to use your pytest `testpaths` instead; unittest treats `""` as `tests`. |
+| `test-pattern` | string | `test*.py` | Filename glob for test modules. With pytest it overrides your `python_files` setting, so the default skips `*_test.py` files; set it to `""` to use your pytest configuration and pytest's defaults (`test_*.py` and `*_test.py`). unittest treats `""` as `test*.py`. Discovering zero tests fails the job. |
 | `top-level-directory` | string | `""` | unittest import root for package-based layouts. Ignored by pytest, which reads `rootdir` from its own configuration. |
 | `test-verbosity` | number | `2` | Output verbosity 0, 1 or 2. For pytest these mean `-q`, the default and `-v`. |
 | `test-fail-fast` | boolean | `false` | Stop after the first failing test. Other matrix jobs still finish. |
