@@ -8,6 +8,8 @@ major tag such as `v1`, an exact release, or a commit SHA.
 ### Added
 
 - `call-name` input to tell apart several calls from one caller workflow.
+- Warnings for experimental versions missing from `python-versions`, an
+  all-experimental matrix, and Python versions given as JSON numbers.
 
 ### Fixed
 
@@ -17,6 +19,11 @@ major tag such as `v1`, an exact release, or a commit SHA.
   `cancel-in-progress: true` could cancel each other's running jobs.
 - Uploaded JUnit and coverage artifacts no longer collide when one caller workflow
   calls the workflow more than once: their names gain a per-call suffix.
+- Ruff, pip-audit and the package build run on the first non-experimental Python
+  version. They used to run on the first listed version, so with a newest-first list
+  whose first entry was experimental their failures could not fail the run.
+- `operating-systems` entries may be label arrays or runner-group objects. Those
+  runners used to skip Ruff, pip-audit and the build without a warning.
 
 ### Behaviour changes
 

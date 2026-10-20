@@ -72,7 +72,7 @@ inside the checkout. JSON arrays are passed as strings.
 | Input | Type | Default | Description |
 | --- | --- | --- | --- |
 | `python-versions` | string | `["3.11", "3.12", "3.13", "3.14"]` | JSON array of Python versions. Append `t` for a free-threaded (no-GIL) build, such as `3.14t`. |
-| `operating-systems` | string | `["ubuntu-latest"]` | JSON array of runner labels. Every step runs through Python, so Windows and macOS need no shell changes. |
+| `operating-systems` | string | `["ubuntu-latest"]` | JSON array of runners. Each entry is a label, an array of labels such as `["self-hosted", "linux"]`, or a runner-group object such as `{"group": "large"}`. Every step runs through Python, so Windows and macOS need no shell changes. |
 | `allow-prereleases` | boolean | `false` | Let `setup-python` install alpha, beta and release-candidate versions. |
 | `experimental-python-versions` | string | `[]` | JSON array of matrix versions whose failures do not fail the run. |
 | `max-parallel` | number | `3` | Maximum simultaneous matrix jobs. |
@@ -96,7 +96,7 @@ inside the checkout. JSON arrays are passed as strings.
 
 | Input | Type | Default | Description |
 | --- | --- | --- | --- |
-| `audit-version` | string | `""` | Scan the installed dependencies with this pip-audit version, once per run, against the PyPI vulnerability database. Editable installs and the interpreter's own pip, setuptools and wheel are skipped unless the requirements file pins them. Findings fail the job and appear in the job summary. Empty disables the audit. |
+| `audit-version` | string | `""` | Scan the installed dependencies with this pip-audit version, once per run on the primary cell, against the PyPI vulnerability database. Editable installs and the interpreter's own pip, setuptools and wheel are skipped unless the requirements file pins them. Findings fail the job and appear in the job summary. Empty disables the audit. |
 | `audit-ignore` | string | `[]` | JSON array of vulnerability IDs to accept, such as `["GHSA-xxxx-xxxx-xxxx"]`. |
 
 ### Tests
@@ -122,7 +122,7 @@ inside the checkout. JSON arrays are passed as strings.
 | --- | --- | --- | --- |
 | `compile-paths` | string | `["."]` | JSON array of files or directories to byte-compile. |
 | `compile-exclude` | string | `""` | Python regex of paths to skip while compiling. Match either separator, such as `[/\\]generated[/\\]`. |
-| `ruff-version` | string | `""` | Run `ruff check` at this version, once per run. Empty disables Ruff. |
+| `ruff-version` | string | `""` | Run `ruff check` at this version, once per run on the primary cell. Empty disables Ruff. |
 | `ruff-format` | boolean | `true` | Also run `ruff format --check` when Ruff is enabled. |
 | `lint-paths` | string | `["."]` | JSON array of paths for Ruff and mypy. |
 | `mypy-version` | string | `""` | Type-check `lint-paths` with this mypy version on every matrix job. Empty disables mypy. |
@@ -134,7 +134,7 @@ inside the checkout. JSON arrays are passed as strings.
 | `coverage-version` | string | `""` | Measure tests with this coverage.py version. The job summary shows the total and a collapsible per-file table with missing lines, and `coverage.xml` is uploaded as `coverage-<os>-<python>`. |
 | `coverage-fail-under` | number | `0` | Fail when total coverage is below this percentage. |
 | `test-wheel` | boolean | `false` | After building, install the wheel (with `project-extras` and a `.txt` `requirements-file`) in a fresh virtual environment and run only a copy of the tests against it. This catches files missing from the wheel and broken package discovery. Requires `build-package`. |
-| `build-package` | boolean | `false` | Build an sdist and wheel and run `twine check --strict`, once per run. Requires `pyproject.toml`. Nothing is published. |
+| `build-package` | boolean | `false` | Build an sdist and wheel and run `twine check --strict`, once per run on the primary cell. Requires `pyproject.toml`. Nothing is published. |
 
 ### Calling the workflow more than once
 
@@ -163,6 +163,15 @@ default `working-directory: .` keeps the plain names.
 To serialize or cancel whole caller runs instead, set `concurrency:` on the caller
 workflow itself, for example
 `concurrency: {group: ci-${{ github.ref }}, cancel-in-progress: true}`.
+
+### The primary cell
+
+Ruff, pip-audit and the package build run once per call, on the primary cell: the
+first entry of `operating-systems` with the first entry of `python-versions` that is
+not in `experimental-python-versions`. Their failures therefore always fail the run.
+The validation step warns when an experimental version is missing from
+`python-versions`, when every version is experimental, and when versions are given as
+JSON numbers (`3.10` as a number becomes `3.1`).
 
 ## Outputs and required checks
 

@@ -84,6 +84,76 @@ def artifact_suffix() -> str:
     return "-" + re.sub(r'[/:<>|*?"]+', "-", directory)
 
 
+def json_list(name: str, default: str) -> list:
+    try:
+        value = json.loads(env(name) or default)
+    except ValueError:
+        raise SystemExit(
+            f"{name.lower().replace('_', '-')} must be a JSON array"
+        ) from None
+    if not isinstance(value, list):
+        raise SystemExit(f"{name.lower().replace('_', '-')} must be a JSON array")
+    return value
+
+
+def runner_slug(label) -> str:
+    """Name a runner label, label array or runner-group object for artifact names."""
+    if isinstance(label, dict):
+        parts = [label["group"]] if label.get("group") else []
+        labels = label.get("labels", [])
+        parts += [labels] if isinstance(labels, str) else list(labels)
+    elif isinstance(label, list):
+        parts = label
+    else:
+        parts = [label]
+    return re.sub(r'[/\\:<>|*?"\s]+', "-", "-".join(str(part) for part in parts))
+
+
+def matrix_cell() -> dict[str, str]:
+    """Describe this job's matrix cell and whether it runs the once-per-run checks.
+
+    The primary cell is the first operating system with the first python version
+    that is not experimental, so lint, audit and build failures always count.
+    """
+    systems = json_list("OPERATING_SYSTEMS", '["ubuntu-latest"]')
+    versions = [str(v) for v in json_list("PYTHON_VERSIONS", "[]")]
+    experimental = [str(v) for v in json_list("EXPERIMENTAL_PYTHON_VERSIONS", "[]")]
+    if any(not isinstance(v, str) for v in json_list("PYTHON_VERSIONS", "[]")):
+        print(
+            "::warning::python-versions has numbers; quote them, because 3.10 as a "
+            "number becomes 3.1"
+        )
+    for version in experimental:
+        if versions and version not in versions:
+            print(
+                f"::warning::experimental-python-versions lists {version}, which is not "
+                "in python-versions"
+            )
+    stable = [v for v in versions if v not in experimental]
+    if versions and not stable:
+        print(
+            "::warning::Every entry in python-versions is listed in "
+            "experimental-python-versions, so no failure can fail the run"
+        )
+    primary_version = (stable or versions)[0] if versions else ""
+    if not env("MATRIX_PYTHON"):
+        # Outside a matrix (for example a local run), this is the only cell.
+        return {
+            "primary": "true",
+            "os-slug": runner_slug(systems[0]) if systems else "",
+        }
+    current_os = json.loads(env("MATRIX_OS")) if env("MATRIX_OS") else None
+    primary = (
+        bool(systems)
+        and current_os == systems[0]
+        and env("MATRIX_PYTHON") == primary_version
+    )
+    return {
+        "primary": "true" if primary else "false",
+        "os-slug": runner_slug(current_os),
+    }
+
+
 def write_outputs(values: dict[str, str]) -> None:
     if env("GITHUB_OUTPUT"):
         with open(env("GITHUB_OUTPUT"), "a", encoding="utf-8") as output:
@@ -175,7 +245,7 @@ def validate() -> int:
     if not pattern or "/" in pattern or "\\" in pattern:
         raise SystemExit("test-pattern must be a nonempty filename glob")
     re.compile(env("COMPILE_EXCLUDE"))
-    write_outputs({"artifact-suffix": artifact_suffix()})
+    write_outputs({"artifact-suffix": artifact_suffix(), **matrix_cell()})
     return 0
 
 
