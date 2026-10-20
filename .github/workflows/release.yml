@@ -10,13 +10,41 @@ concurrency:
   group: release
   cancel-in-progress: false
 jobs:
+  # The checks below run on the exact commit being released. Releases happen only
+  # from main in this repository, and only after every check passes.
+  ci:
+    if: github.repository == 'alex-papaioannou/python-ci-workflows' && github.ref == 'refs/heads/main'
+    uses: ./.github/workflows/ci.yml
+  examples:
+    if: github.repository == 'alex-papaioannou/python-ci-workflows' && github.ref == 'refs/heads/main'
+    uses: ./.github/workflows/examples.yml
+  lint:
+    if: github.repository == 'alex-papaioannou/python-ci-workflows' && github.ref == 'refs/heads/main'
+    uses: ./.github/workflows/workflow-lint.yml
   release:
-    if: github.repository == 'alex-papaioannou/python-ci-workflows'
+    needs: [ci, examples, lint]
+    if: github.repository == 'alex-papaioannou/python-ci-workflows' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     timeout-minutes: 10
+    environment: release
     permissions:
       contents: write
     steps:
+      - name: Record the checks that gated this release
+        env:
+          CI_RESULT: ${{ needs.ci.result }}
+          EXAMPLES_RESULT: ${{ needs.examples.result }}
+          LINT_RESULT: ${{ needs.lint.result }}
+        run: |
+          {
+            echo "### Release gates for $GITHUB_SHA"
+            echo
+            echo "| Check | Result |"
+            echo "| --- | --- |"
+            echo "| Workflow smoke test | $CI_RESULT |"
+            echo "| Example consumers | $EXAMPLES_RESULT |"
+            echo "| Workflow lint | $LINT_RESULT |"
+          } >> "$GITHUB_STEP_SUMMARY"
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false

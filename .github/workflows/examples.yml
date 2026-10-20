@@ -4,6 +4,8 @@ on:
     branches: [main]
   pull_request:
   workflow_dispatch:
+  # Called by release.yml so a release waits for these checks on the same commit.
+  workflow_call:
 permissions:
   contents: read
 jobs:
