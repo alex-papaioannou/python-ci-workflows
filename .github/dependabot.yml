@@ -11,7 +11,7 @@ updates:
     groups:
       actions:
         patterns: ["*"]
-  # requirements-dev.txt (compiled from requirements-dev.in with hashes).
+  # requirements-dev.txt and requirements-lint.txt (compiled with hashes).
   # tests/fixtures and examples are left out on purpose: their lock files pin
   # iniconfig==2.1.0, which tests/test_workflow_contract.py expects.
   - package-ecosystem: pip
