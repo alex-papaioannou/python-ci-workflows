@@ -15,6 +15,14 @@ major tag such as `v1`, an exact release, or a commit SHA.
   concurrency groups. Calls for different `working-directory` values used to run one
   after another, could cancel each other's pending jobs, and with
   `cancel-in-progress: true` could cancel each other's running jobs.
+- Uploaded JUnit and coverage artifacts no longer collide when one caller workflow
+  calls the workflow more than once: their names gain a per-call suffix.
+
+### Behaviour changes
+
+- Artifact names for calls with a `working-directory` other than `.`, or with a
+  `call-name`, end in `-<call-name>` or `-<working-directory>`. Single calls from
+  the repository root keep their names.
 
 ### Security
 
