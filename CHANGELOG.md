@@ -26,6 +26,10 @@ major tag such as `v1`, an exact release, or a commit SHA.
 
 ### Security
 
+- The default `uv-version` is now 0.13.4. Earlier uv releases trust a root
+  certificate authority with compromised intermediate keys (GHSA-hq85-5cpj-mr62),
+  which allows interception of package downloads. Callers that pin `uv-version`
+  should move to 0.13.4 or later.
 - `actions/checkout` 7.0.1, `actions/setup-python` 7.0.0 and
   `actions/upload-artifact` 7.0.2, still pinned to full commit SHAs.
 - SECURITY.md now states which installs are hash-checked and which are pinned by

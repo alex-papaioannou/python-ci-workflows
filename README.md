@@ -89,7 +89,7 @@ inside the checkout. JSON arrays are passed as strings.
 | `install-project` | boolean | `false` | `pip install --editable .` after requirements. With a `requirements-file`, dependencies are assumed locked and installed with `--no-deps`. |
 | `project-extras` | string | `""` | Comma-separated extras installed with the project, such as `test,dev`. |
 | `installer` | string | `pip` | `pip` or `uv`. uv installs into the same interpreter and is much faster on large dependency sets. |
-| `uv-version` | string | `0.11.32` | uv version used when `installer` is `uv`. |
+| `uv-version` | string | `0.13.4` | uv version used when `installer` is `uv`. |
 | `require-hashes` | boolean | `true` | Install with `--require-hashes`. Generate files with `pip-compile --generate-hashes` or `uv pip compile --generate-hashes`. |
 
 ### Dependency audit
