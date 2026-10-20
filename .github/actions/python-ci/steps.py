@@ -1034,14 +1034,6 @@ def start_coverage():
     return cov
 
 
-def report_result() -> int:
-    result = env("MATRIX_RESULT")
-    with open(env("GITHUB_OUTPUT"), "a", encoding="utf-8") as output:
-        output.write(f"result={result}\n")
-    print(f"Matrix result: {result}")
-    return 0 if result == "success" else 1
-
-
 STEPS = {
     "validate": validate,
     "install": install,
@@ -1052,7 +1044,6 @@ STEPS = {
     "build": build,
     "install-test-tools": install_test_tools,
     "test": test,
-    "result": report_result,
 }
 
 if __name__ == "__main__":
