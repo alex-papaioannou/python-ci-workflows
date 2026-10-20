@@ -113,7 +113,7 @@ First tagged release.
 - A single aggregated `result` check and workflow output.
 - Configurable Python versions, test discovery, verbosity, fail-fast, timeout,
   parallelism, compile targets and exclusions, warnings-as-errors, and hash seed.
-- Early validation of all inputs.
+- Early validation of inputs.
 
 ### Testing
 

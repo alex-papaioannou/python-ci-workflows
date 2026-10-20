@@ -23,11 +23,11 @@ on:
         type: string
         default: "[\"ubuntu-latest\"]"
       test-directory:
-        description: "Unittest discovery directory"
+        description: "Directory to discover tests in; empty uses the pytest configuration"
         type: string
         default: "tests"
       test-pattern:
-        description: "Unittest filename glob"
+        description: "Filename glob for test modules; empty uses the pytest configuration"
         type: string
         default: "test*.py"
       working-directory:
@@ -39,11 +39,11 @@ on:
         type: string
         default: ""
       test-verbosity:
-        description: "Unittest output verbosity: 0, 1, or 2"
+        description: "Test output verbosity: 0, 1, or 2"
         type: number
         default: 2
       test-fail-fast:
-        description: "Stop unittest after the first failure"
+        description: "Stop the test run after the first failure"
         type: boolean
         default: false
       timeout-minutes:
