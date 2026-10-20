@@ -136,7 +136,7 @@ def validate() -> int:
     if not VERSION.fullmatch(env("UV_VERSION")) or (
         env("INSTALLER") == "uv" and not env("UV_VERSION")
     ):
-        raise SystemExit("uv-version must be a version such as 0.11.32")
+        raise SystemExit("uv-version must be a version such as 0.13.4")
     if (
         requirements
         and (is_uv_lock(requirements) or is_pylock(requirements))

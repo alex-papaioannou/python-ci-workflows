@@ -145,7 +145,7 @@ on:
       uv-version:
         description: "uv version used when installer is uv"
         type: string
-        default: "0.11.32"
+        default: "0.13.4"
       audit-version:
         description: "pip-audit version to scan installed dependencies with; empty disables the audit"
         type: string

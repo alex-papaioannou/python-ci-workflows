@@ -595,7 +595,7 @@ class ProjectInstallTests(StepHarness, unittest.TestCase):
             self.assertEqual(check.stdout.strip(), "1.0", check.stderr)
 
 
-UV = {"INSTALLER": "uv", "UV_VERSION": "0.11.32"}
+UV = {"INSTALLER": "uv", "UV_VERSION": "0.13.4"}
 
 
 class UvInstallerTests(StepHarness, unittest.TestCase):
