@@ -1,6 +1,7 @@
 """Run the workflow's step scripts against temporary consumer projects."""
 
 import importlib.util
+import json
 import os
 import re
 import shutil
@@ -348,6 +349,24 @@ class WorkflowTests(StepHarness, unittest.TestCase):
         result = self.execute(files, step="Build and check package")
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertIn("PASSED", result.stdout)
+
+    def test_default_max_parallel_covers_the_default_matrix(self):
+        text = WORKFLOW.read_text()
+
+        def default(name):
+            block = re.search(
+                rf"^      {name}:\n(?:        .*\n)*?        default: (.*)$",
+                text,
+                re.MULTILINE,
+            )
+            return block.group(1)
+
+        versions = json.loads(json.loads(default("python-versions")))
+        systems = json.loads(json.loads(default("operating-systems")))
+        self.assertGreaterEqual(
+            int(default("max-parallel")), len(versions) * len(systems)
+        )
+        self.assertEqual(int(default("max-parallel")), 256)
 
     def test_concurrency_is_opt_in(self):
         text = WORKFLOW.read_text()

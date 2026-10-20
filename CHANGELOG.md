@@ -21,6 +21,12 @@ major tag such as `v1`, an exact release, or a commit SHA.
 - A failed hash-checked install now explains `require-hashes` and how to generate
   hashes.
 
+### Changed defaults
+
+- `max-parallel` defaults to 256, so the whole matrix starts at once; it used to be
+  3, which split even the default four-version matrix into two waves. Set
+  `max-parallel` explicitly to keep throttling.
+
 ### Fixed
 
 - Several calls of the workflow from one caller workflow no longer share matrix

@@ -51,9 +51,9 @@ on:
         type: number
         default: 10
       max-parallel:
-        description: "Maximum simultaneous matrix jobs"
+        description: "Maximum simultaneous matrix jobs; the default runs the whole matrix at once"
         type: number
-        default: 3
+        default: 256
       compile-paths:
         description: "JSON array of files or directories to syntax-check"
         type: string
