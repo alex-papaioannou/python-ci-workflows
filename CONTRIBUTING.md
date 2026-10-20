@@ -41,8 +41,14 @@ Releases follow semantic versioning. A breaking change is removing or renaming a
 input or output, changing a default in a way that can fail existing callers, or
 dropping a supported Python version.
 
-Releasing is automated. Add a `## [X.Y.Z]` section at the top of `CHANGELOG.md` in
-the pull request that should ship. When it merges, the `Release` workflow runs the
+Every pull request that changes behaviour adds a bullet under `## [Unreleased]` at
+the top of `CHANGELOG.md`, in one of these subsections: Added, Changed, Fixed,
+Security, Changed defaults, Behaviour changes. Changed defaults and Behaviour
+changes list anything that can make an existing caller's run behave differently.
+
+Releasing is automated. To release, open a pull request that renames
+`## [Unreleased]` to `## [X.Y.Z] - YYYY-MM-DD` and adds a fresh, empty
+`## [Unreleased]` above it. When it merges, the `Release` workflow runs the
 smoke test, the example consumers and workflow lint again on that exact commit. Only
 if all of them pass does it create the `vX.Y.Z` GitHub release from that section and
 move the major tag (`vX`) to the same commit. Releases run only from `main`, in the
