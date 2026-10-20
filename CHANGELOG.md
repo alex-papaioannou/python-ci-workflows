@@ -9,7 +9,8 @@ major tag such as `v1`, an exact release, or a commit SHA.
 
 - `call-name` input to tell apart several calls from one caller workflow.
 - `result-runner` input to choose the runner of the final `result` job, which no
-  longer needs Python or the step scripts.
+  longer needs Python or the step scripts: a label, a JSON array of labels, or a
+  runner-group object.
 - With the pytest runner, an empty `test-directory` or `test-pattern` now means "use
   the project's pytest configuration": the workflow passes neither a path nor
   `python_files`, so `testpaths`, `python_files` and pytest's `*_test.py` default

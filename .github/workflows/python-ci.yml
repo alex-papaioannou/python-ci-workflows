@@ -111,7 +111,7 @@ on:
         type: string
         default: ""
       result-runner:
-        description: "Runner label for the final result job"
+        description: "Runner for the final result job: a label, or one runner as a JSON label array or runner-group object"
         type: string
         default: "ubuntu-latest"
       cancel-in-progress:
@@ -324,7 +324,7 @@ jobs:
     name: result
     needs: test
     if: always()
-    runs-on: ${{ inputs.result-runner }}
+    runs-on: ${{ (startsWith(inputs.result-runner, '[') || startsWith(inputs.result-runner, '{')) && fromJSON(inputs.result-runner) || inputs.result-runner }}
     timeout-minutes: 5
     outputs:
       result: ${{ needs.test.result }}

@@ -79,7 +79,7 @@ inside the checkout. JSON arrays are passed as strings.
 | `timeout-minutes` | number | `10` | Per-job timeout in minutes. GitHub-hosted runners stop jobs after 360 minutes regardless. |
 | `cancel-in-progress` | boolean | `false` | Cancel older in-flight jobs for the same workflow, ref and call when a new run starts. |
 | `call-name` | string | `""` | Name for this call when one caller workflow calls the workflow more than once with the same `working-directory`. Letters, digits, `.`, `_` and `-`. |
-| `result-runner` | string | `ubuntu-latest` | Runner label for the final `result` job, which needs no Python. Set it when GitHub-hosted runners are unavailable. |
+| `result-runner` | string | `ubuntu-latest` | Runner for the final `result` job, which needs no Python: a label, or one runner in JSON as a single `operating-systems` entry would be: an array of labels it must all have, or a runner-group object. Set it when GitHub-hosted runners are unavailable. |
 | `working-directory` | string | `.` | Project directory inside the checkout, for monorepos. |
 
 ### Dependencies
