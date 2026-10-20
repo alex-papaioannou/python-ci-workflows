@@ -8,6 +8,10 @@ major tag such as `v1`, an exact release, or a commit SHA.
 ### Added
 
 - `call-name` input to tell apart several calls from one caller workflow.
+- With the pytest runner, an empty `test-directory` or `test-pattern` now means "use
+  the project's pytest configuration": the workflow passes neither a path nor
+  `python_files`, so `testpaths`, `python_files` and pytest's `*_test.py` default
+  apply. The defaults are unchanged for now; they still override that configuration.
 - Warnings for experimental versions missing from `python-versions`, an
   all-experimental matrix, and Python versions given as JSON numbers.
 
@@ -24,6 +28,8 @@ major tag such as `v1`, an exact release, or a commit SHA.
   whose first entry was experimental their failures could not fail the run.
 - `operating-systems` entries may be label arrays or runner-group objects. Those
   runners used to skip Ruff, pip-audit and the build without a warning.
+- "No tests discovered" now names `test-directory` and `test-pattern` and their
+  values.
 
 ### Behaviour changes
 
