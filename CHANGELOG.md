@@ -41,6 +41,10 @@ major tag such as `v1`, an exact release, or a commit SHA.
 
 - Releases are published only from `main`, and only after the smoke test, the
   example consumers and workflow lint pass again on the released commit.
+- The release job rejects malformed, misplaced, empty and out-of-order changelog
+  versions instead of falling back to the previous release, tells API errors apart
+  from missing tags, publishes a version only from the commit that added it, and
+  leaves a manually rolled-back major tag alone on ordinary pushes.
 
 ### Security
 

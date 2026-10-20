@@ -46,8 +46,23 @@ the pull request that should ship. When it merges, the `Release` workflow runs t
 smoke test, the example consumers and workflow lint again on that exact commit. Only
 if all of them pass does it create the `vX.Y.Z` GitHub release from that section and
 move the major tag (`vX`) to the same commit. Releases run only from `main`, in the
-`release` environment. If the version is already released it does nothing, so editing
-older changelog entries is safe.
+`release` environment.
+
+The release job reads the first `## ` section after `## [Unreleased]`. That heading
+must be `## [X.Y.Z]` or `## [X.Y.Z] - YYYY-MM-DD` with plain ASCII numbers and no
+leading zeros, the section must contain more than empty subsection headings, and the
+version must not be lower than the newest existing release; otherwise the job fails.
+A heading that looks like a version but is not a level-two heading also fails. Older
+sections are not checked.
+
+Only the commit that adds a version to `CHANGELOG.md` publishes it. If that Release
+run fails, re-run it: re-runs keep the original commit. A later push never publishes
+an older pending version; it fails instead, and running Release manually from `main`
+publishes it from the current commit. When the version is already released, the job
+changes nothing unless the major tag is missing. It moves an out-of-date major tag
+only on a re-run of the releasing commit or a manual run, and otherwise warns, so a
+deliberate rollback of `vX` is not undone by the next merge. To roll back, point `vX`
+at the previous release and ship the fix as a new patch release.
 
 The `release` environment is configured once in the repository settings: Settings >
 Environments > `release` > Deployment branches and tags > Selected branches and tags,
