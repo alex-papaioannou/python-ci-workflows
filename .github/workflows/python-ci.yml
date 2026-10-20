@@ -19,7 +19,7 @@ on:
         type: string
         default: "[]"
       operating-systems:
-        description: "JSON array of GitHub-hosted runner labels"
+        description: "JSON array of runner labels, label arrays or runner-group objects"
         type: string
         default: "[\"ubuntu-latest\"]"
       test-directory:
@@ -170,7 +170,7 @@ jobs:
     timeout-minutes: ${{ inputs.timeout-minutes }}
     continue-on-error: ${{ contains(fromJSON(inputs.experimental-python-versions), matrix.python-version) }}
     concurrency:
-      group: ${{ inputs.cancel-in-progress && format('python-ci-{0}-{1}-{2}-{3}-{4}-{5}', github.workflow, github.ref, inputs.working-directory, inputs.call-name, matrix.os, matrix.python-version) || format('python-ci-{0}-{1}-{2}-{3}-{4}-{5}', github.run_id, github.run_attempt, inputs.working-directory, inputs.call-name, matrix.os, matrix.python-version) }}
+      group: ${{ inputs.cancel-in-progress && format('python-ci-{0}-{1}-{2}-{3}-{4}', github.workflow, github.ref, inputs.working-directory, inputs.call-name, strategy.job-index) || format('python-ci-{0}-{1}-{2}-{3}-{4}', github.run_id, github.run_attempt, inputs.working-directory, inputs.call-name, strategy.job-index) }}
       cancel-in-progress: ${{ inputs.cancel-in-progress }}
     defaults:
       run:
@@ -201,6 +201,11 @@ jobs:
         id: validate
         env:
           WORKING_DIRECTORY: ${{ inputs.working-directory }}
+          OPERATING_SYSTEMS: ${{ inputs.operating-systems }}
+          PYTHON_VERSIONS: ${{ inputs.python-versions }}
+          EXPERIMENTAL_PYTHON_VERSIONS: ${{ inputs.experimental-python-versions }}
+          MATRIX_OS: ${{ toJSON(matrix.os) }}
+          MATRIX_PYTHON: ${{ matrix.python-version }}
           TEST_DIRECTORY: ${{ inputs.test-directory }}
           TEST_PATTERN: ${{ inputs.test-pattern }}
           TOP_LEVEL_DIRECTORY: ${{ inputs.top-level-directory }}
@@ -240,14 +245,14 @@ jobs:
           UV_VERSION: ${{ inputs.uv-version }}
         run: python "$PYTHON_CI_STEPS" install
       - name: Audit dependencies
-        if: inputs.audit-version != '' && matrix.python-version == fromJSON(inputs.python-versions)[0] && matrix.os == fromJSON(inputs.operating-systems)[0]
+        if: inputs.audit-version != '' && steps.validate.outputs.primary == 'true'
         env:
           AUDIT_VERSION: ${{ inputs.audit-version }}
           AUDIT_IGNORE: ${{ inputs.audit-ignore }}
           REQUIREMENTS_FILE: ${{ inputs.requirements-file }}
         run: python "$PYTHON_CI_STEPS" audit
       - name: Lint with Ruff
-        if: inputs.ruff-version != '' && matrix.python-version == fromJSON(inputs.python-versions)[0] && matrix.os == fromJSON(inputs.operating-systems)[0]
+        if: inputs.ruff-version != '' && steps.validate.outputs.primary == 'true'
         env:
           RUFF_VERSION: ${{ inputs.ruff-version }}
           RUFF_FORMAT: ${{ inputs.ruff-format }}
@@ -265,7 +270,7 @@ jobs:
           COMPILE_EXCLUDE: ${{ inputs.compile-exclude }}
         run: python "$PYTHON_CI_STEPS" compile
       - name: Build and check package
-        if: inputs.build-package && matrix.python-version == fromJSON(inputs.python-versions)[0] && matrix.os == fromJSON(inputs.operating-systems)[0]
+        if: inputs.build-package && steps.validate.outputs.primary == 'true'
         env:
           TEST_WHEEL: ${{ inputs.test-wheel }}
           REQUIREMENTS_FILE: ${{ inputs.requirements-file }}
@@ -301,14 +306,14 @@ jobs:
         if: always() && inputs.junit-file != ''
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          name: junit-${{ matrix.os }}-${{ matrix.python-version }}${{ steps.validate.outputs.artifact-suffix }}
+          name: junit-${{ steps.validate.outputs.os-slug || matrix.os }}-${{ matrix.python-version }}${{ steps.validate.outputs.artifact-suffix }}
           path: ${{ inputs.working-directory }}/${{ inputs.junit-file }}
           if-no-files-found: ignore
       - name: Upload coverage report
         if: always() && inputs.coverage-version != ''
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          name: coverage-${{ matrix.os }}-${{ matrix.python-version }}${{ steps.validate.outputs.artifact-suffix }}
+          name: coverage-${{ steps.validate.outputs.os-slug || matrix.os }}-${{ matrix.python-version }}${{ steps.validate.outputs.artifact-suffix }}
           path: ${{ inputs.working-directory }}/coverage.xml
           if-no-files-found: ignore
   result:

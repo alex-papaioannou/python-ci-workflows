@@ -307,7 +307,9 @@ class WorkflowTests(StepHarness, unittest.TestCase):
         branches = group.split(" || ")
         self.assertEqual(len(branches), 2)
         for branch in branches:
-            self.assertIn("inputs.working-directory, inputs.call-name", branch)
+            self.assertIn(
+                "inputs.working-directory, inputs.call-name, strategy.job-index", branch
+            )
 
     def test_artifact_suffix_keeps_names_unique_per_call(self):
         cases = (
@@ -322,17 +324,9 @@ class WorkflowTests(StepHarness, unittest.TestCase):
             ),
         )
         for env, suffix in cases:
-            with self.subTest(env=env), tempfile.TemporaryDirectory() as out:
-                output = Path(out) / "output"
-                result = self.execute(
-                    {"tests/test_ok.py": ""},
-                    {**env, "GITHUB_OUTPUT": str(output)},
-                    step="Validate inputs",
-                )
-                self.assertEqual(result.returncode, 0, result.stderr)
-                self.assertEqual(
-                    output.read_text(encoding="utf-8"), f"artifact-suffix={suffix}\n"
-                )
+            with self.subTest(env=env):
+                values, _ = self.validate_outputs(env)
+                self.assertEqual(values["artifact-suffix"], suffix)
 
     def test_uploaded_artifact_names_use_the_suffix(self):
         names = re.findall(
@@ -343,6 +337,97 @@ class WorkflowTests(StepHarness, unittest.TestCase):
             self.assertTrue(
                 name.endswith("${{ steps.validate.outputs.artifact-suffix }}"), name
             )
+
+    def validate_outputs(self, env):
+        with tempfile.TemporaryDirectory() as out:
+            output = Path(out) / "output"
+            result = self.execute(
+                {"tests/test_ok.py": ""},
+                {**env, "GITHUB_OUTPUT": str(output)},
+                step="Validate inputs",
+            )
+            self.assertEqual(result.returncode, 0, result.stderr)
+            values = dict(
+                line.split("=", 1)
+                for line in output.read_text(encoding="utf-8").splitlines()
+            )
+            return values, result.stdout
+
+    def test_primary_cell_skips_experimental_versions(self):
+        matrix = {
+            "PYTHON_VERSIONS": '["3.15", "3.14"]',
+            "EXPERIMENTAL_PYTHON_VERSIONS": '["3.15"]',
+            "OPERATING_SYSTEMS": '["ubuntu-latest", "windows-latest"]',
+        }
+        expected = {
+            ("ubuntu-latest", "3.15"): "false",
+            ("ubuntu-latest", "3.14"): "true",
+            ("windows-latest", "3.14"): "false",
+        }
+        for (system, version), primary in expected.items():
+            with self.subTest(system=system, version=version):
+                values, _ = self.validate_outputs(
+                    {**matrix, "MATRIX_OS": f'"{system}"', "MATRIX_PYTHON": version}
+                )
+                self.assertEqual(values["primary"], primary)
+                self.assertEqual(values["os-slug"], system)
+
+    def test_runner_label_arrays_and_groups(self):
+        cases = (
+            (
+                '[["self-hosted", "linux"]]',
+                '[\n  "self-hosted",\n  "linux"\n]',
+                "self-hosted-linux",
+            ),
+            (
+                '[{"group": "big runners", "labels": ["linux"]}]',
+                '{"group": "big runners", "labels": ["linux"]}',
+                "big-runners-linux",
+            ),
+        )
+        for systems, matrix_os, slug in cases:
+            with self.subTest(systems=systems):
+                values, _ = self.validate_outputs(
+                    {
+                        "OPERATING_SYSTEMS": systems,
+                        "PYTHON_VERSIONS": '["3.13"]',
+                        "MATRIX_OS": matrix_os,
+                        "MATRIX_PYTHON": "3.13",
+                    }
+                )
+                self.assertEqual((values["primary"], values["os-slug"]), ("true", slug))
+
+    def test_matrix_configuration_warnings(self):
+        cases = (
+            (
+                {
+                    "PYTHON_VERSIONS": '["3.13"]',
+                    "EXPERIMENTAL_PYTHON_VERSIONS": '["3.31"]',
+                },
+                "lists 3.31, which is not in python-versions",
+            ),
+            (
+                {
+                    "PYTHON_VERSIONS": '["3.15"]',
+                    "EXPERIMENTAL_PYTHON_VERSIONS": '["3.15"]',
+                },
+                "no failure can fail the run",
+            ),
+            ({"PYTHON_VERSIONS": "[3.12, 3.13]"}, "quote them"),
+        )
+        for env, warning in cases:
+            with self.subTest(env=env):
+                _, stdout = self.validate_outputs(env)
+                self.assertIn("::warning::", stdout)
+                self.assertIn(warning, stdout)
+
+    def test_once_per_run_checks_use_the_primary_cell(self):
+        text = WORKFLOW.read_text()
+        for step in ("Audit dependencies", "Lint with Ruff", "Build and check package"):
+            block = text[text.index(f"- name: {step}") :].split("\n      - ", 1)[0]
+            with self.subTest(step=step):
+                self.assertIn("steps.validate.outputs.primary == 'true'", block)
+                self.assertNotIn("fromJSON(inputs.python-versions)[0]", block)
 
     def test_call_name_validated(self):
         for value, ok in (
