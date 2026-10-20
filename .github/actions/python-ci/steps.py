@@ -167,6 +167,26 @@ def write_outputs(values: dict[str, str]) -> None:
             output.writelines(f"{key}={value}\n" for key, value in values.items())
 
 
+def warn_about_inputs_without_effect() -> None:
+    """Point out input combinations that are accepted but change nothing."""
+    if float(env("COVERAGE_FAIL_UNDER") or 0) > 0 and not env("COVERAGE_VERSION"):
+        print("::warning::coverage-fail-under has no effect without coverage-version")
+    if json.loads(env("AUDIT_IGNORE") or "[]") and not env("AUDIT_VERSION"):
+        print("::warning::audit-ignore has no effect without audit-version")
+    requirements = env("REQUIREMENTS_FILE")
+    if (
+        extras()
+        and flag("INSTALL_PROJECT")
+        and requirements
+        and not is_uv_lock(requirements)
+    ):
+        print(
+            "::warning::project-extras with install-project and requirements-file installs "
+            "the project with --no-deps, so the extras' dependencies must already be in "
+            "requirements-file"
+        )
+
+
 def validate() -> int:
     for key in ("TEST_DIRECTORY", "TOP_LEVEL_DIRECTORY"):
         value = env(key)
@@ -258,6 +278,7 @@ def validate() -> int:
     if "/" in pattern or "\\" in pattern:
         raise SystemExit("test-pattern must be a filename glob, not a path")
     re.compile(env("COMPILE_EXCLUDE"))
+    warn_about_inputs_without_effect()
     write_outputs({"artifact-suffix": artifact_suffix(), **matrix_cell()})
     return 0
 
@@ -312,9 +333,16 @@ def install() -> int:
                 )
             requirements = exported
         command = ["-r", requirements]
-        if flag("REQUIRE_HASHES", default=True) and not is_pylock(requirements):
+        hashed = flag("REQUIRE_HASHES", default=True) and not is_pylock(requirements)
+        if hashed:
             command.insert(0, "--require-hashes")
         if packages(*command):
+            if hashed:
+                print(
+                    "::error::Installing requirements-file failed with require-hashes: true. "
+                    "If the file has no hashes, generate them (pip-compile --generate-hashes or "
+                    "uv pip compile --generate-hashes) or set require-hashes: false."
+                )
             return 1
     if flag("INSTALL_PROJECT"):
         target = f".[{','.join(extras())}]" if extras() else "."

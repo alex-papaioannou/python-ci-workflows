@@ -15,6 +15,11 @@ major tag such as `v1`, an exact release, or a commit SHA.
 - Warnings for experimental versions missing from `python-versions`, an
   all-experimental matrix, Python versions given as JSON numbers, and Python
   versions older than 3.11, the oldest supported version.
+- Warnings for inputs that have no effect: `coverage-fail-under` without
+  `coverage-version`, `audit-ignore` without `audit-version`, and `project-extras`
+  whose dependencies a `requirements-file` must already provide.
+- A failed hash-checked install now explains `require-hashes` and how to generate
+  hashes.
 
 ### Fixed
 
