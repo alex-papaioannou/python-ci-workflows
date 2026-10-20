@@ -1649,6 +1649,16 @@ def load_steps():
     return module
 
 
+class VenvPythonTests(unittest.TestCase):
+    def test_the_interpreter_path_names_an_existing_file(self):
+        import venv
+
+        steps = load_steps()
+        with tempfile.TemporaryDirectory() as directory:
+            venv.EnvBuilder(with_pip=False).create(directory)
+            self.assertTrue(os.path.isfile(steps.venv_python(directory)))
+
+
 class UnmetRequirementsTests(unittest.TestCase):
     def test_only_the_wheels_own_requirements_count(self):
         steps = load_steps()

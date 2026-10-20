@@ -49,6 +49,16 @@ def scratch_dir(prefix: str) -> str:
     return tempfile.mkdtemp(prefix=prefix, dir=base)
 
 
+def venv_python(venv: str) -> str:
+    """Return the interpreter of a virtual environment, with its full file name.
+
+    uv's --python needs the exact file, so Windows needs the .exe suffix.
+    """
+    if os.name == "nt":
+        return os.path.join(venv, "Scripts", "python.exe")
+    return os.path.join(venv, "bin", "python")
+
+
 def python(*args: str) -> int:
     return subprocess.run([sys.executable, *args], check=False).returncode
 
@@ -518,7 +528,7 @@ def audit() -> int:
 
     tools = scratch_dir("pip-audit-")
     venv.EnvBuilder(with_pip=True).create(tools)
-    auditor = os.path.join(tools, "Scripts" if os.name == "nt" else "bin", "python")
+    auditor = venv_python(tools)
     install = [
         auditor,
         "-m",
@@ -645,9 +655,7 @@ def test_wheel(outdir: str) -> int:
         raise SystemExit(f"Expected one wheel in the build output, found {len(wheels)}")
     workdir = scratch_dir("wheel-test-")
     venv.EnvBuilder(with_pip=True).create(os.path.join(workdir, "venv"))
-    interpreter = os.path.join(
-        workdir, "venv", "Scripts" if os.name == "nt" else "bin", "python"
-    )
+    interpreter = venv_python(os.path.join(workdir, "venv"))
 
     def venv_run(*args: str, cwd: str | None = None) -> int:
         return subprocess.run([interpreter, *args], check=False, cwd=cwd).returncode
