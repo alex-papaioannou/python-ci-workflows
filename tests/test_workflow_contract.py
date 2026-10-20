@@ -35,6 +35,7 @@ class StepHarness:
         env=None,
         step="Run tests and reject empty test suites",
         executable=sys.executable,
+        working_directory=".",
     ):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -50,7 +51,7 @@ class StepHarness:
             return subprocess.run(
                 [executable, str(STEPS), script(step)],
                 check=False,
-                cwd=root,
+                cwd=root / working_directory,
                 env=process_env,
                 text=True,
                 capture_output=True,
@@ -1145,6 +1146,98 @@ class DoctestAndTimingTests(StepHarness, unittest.TestCase):
             step="Validate inputs",
         )
         self.assertNotEqual(result.returncode, 0)
+
+    def test_malformed_doctest_is_an_error_naming_the_file(self):
+        import xml.etree.ElementTree as ET
+
+        files = {
+            "pkg/__init__.py": "",
+            "pkg/tools.py": 'def f():\n    """\n    >>>f()\n    """\n',
+            "tests/test_ok.py": "import unittest\n\n\nclass T(unittest.TestCase):\n    def test_ok(self):\n        pass\n",
+        }
+        with tempfile.TemporaryDirectory() as out:
+            junit = Path(out) / "junit.xml"
+            result = self.execute(
+                files, {"DOCTEST_PATHS": '["pkg"]', "JUNIT_FILE": str(junit)}
+            )
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("Malformed doctest in pkg/tools.py", result.stderr)
+            root = ET.parse(junit).getroot()
+            self.assertEqual(root.get("tests"), "2")
+            self.assertEqual(root.get("errors"), "1")
+            case = next(c for c in root.iter("testcase") if c.find("error") is not None)
+            self.assertEqual(
+                (case.get("classname"), case.get("name")), ("pkg.tools", "doctests")
+            )
+
+    def test_doctest_paths_that_cannot_run_are_rejected_by_name(self):
+        cases = (
+            (
+                {"my-scripts/tool.py": ""},
+                '["my-scripts/tool.py"]',
+                "has no module name for unittest to import",
+            ),
+            ({"notes.txt": ""}, '["notes.txt"]', "is not a .py file"),
+        )
+        for files, paths, message in cases:
+            with self.subTest(paths=paths):
+                result = self.execute(
+                    {"tests/test_ok.py": "", **files},
+                    {"DOCTEST_PATHS": paths},
+                    step="Validate inputs",
+                )
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn(message, result.stderr)
+
+    def test_directory_entries_warn_about_files_they_cannot_import(self):
+        files = {
+            "tests/test_ok.py": "",
+            "pkg/mod.py": "",
+            "my-scripts/tool.py": "",
+            ".github/scripts/release.py": "",
+        }
+        result = self.execute(files, {"DOCTEST_PATHS": '["."]'}, step="Validate inputs")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("::warning::doctest-paths entry '.' skips files", result.stdout)
+        self.assertIn("my-scripts/tool.py", result.stdout)
+        self.assertNotIn("pkg/mod.py", result.stdout)
+
+    def test_pytest_accepts_doctest_files_without_module_names(self):
+        files = {
+            "tests/test_ok.py": "",
+            "my-scripts/build-docs.py": "",
+            ".github/scripts/release.py": "",
+        }
+        for paths in ('["my-scripts/build-docs.py"]', '["."]'):
+            with self.subTest(paths=paths):
+                result = self.execute(
+                    files,
+                    {**PYTEST, "DOCTEST_PATHS": paths},
+                    step="Validate inputs",
+                )
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertNotIn("::warning::doctest-paths", result.stdout)
+
+    def test_doctest_paths_outside_working_directory_are_rejected(self):
+        files = {"app/tests/test_ok.py": "", "shared/util.py": ""}
+        result = self.execute(
+            files,
+            {"DOCTEST_PATHS": '["../shared/util.py"]'},
+            step="Validate inputs",
+            working_directory="app",
+        )
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("outside working-directory", result.stderr)
+
+    def test_python_versions_below_the_floor_warn(self):
+        result = self.execute(
+            {"tests/test_ok.py": ""},
+            {"PYTHON_VERSIONS": '["3.10", "pypy3.10", "3.13"]'},
+            step="Validate inputs",
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("::warning::python-versions lists 3.10", result.stdout)
+        self.assertIn("::warning::python-versions lists pypy3.10", result.stdout)
 
     def test_summary_lists_slowest_tests(self):
         tests = "import time, unittest\n\n\nclass T(unittest.TestCase):\n    def test_slow(self):\n        time.sleep(0.2)\n\n    def test_fast(self):\n        pass\n"

@@ -4,8 +4,9 @@
 
 - Keep each pull request to one behavior change, with tests and README updates.
 - Step logic belongs in `.github/actions/python-ci/steps.py` as a subcommand. Use
-  only the standard library and Python 3.9-compatible syntax there, so it runs the
-  same way on every supported OS and Python version.
+  only the standard library there, and keep it compatible with Python 3.11, the
+  oldest version the workflow supports, so it runs the same way on every supported
+  OS and Python version.
 - New inputs are optional and default to today's behavior. Validate them in the
   `Validate inputs` step so bad configuration fails before any project code runs.
 - Pin third-party actions to a full commit SHA with a version comment, and pin tool

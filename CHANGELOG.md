@@ -13,7 +13,8 @@ major tag such as `v1`, an exact release, or a commit SHA.
   `python_files`, so `testpaths`, `python_files` and pytest's `*_test.py` default
   apply. The defaults are unchanged for now; they still override that configuration.
 - Warnings for experimental versions missing from `python-versions`, an
-  all-experimental matrix, and Python versions given as JSON numbers.
+  all-experimental matrix, Python versions given as JSON numbers, and Python
+  versions older than 3.11, the oldest supported version.
 
 ### Fixed
 
@@ -40,9 +41,19 @@ major tag such as `v1`, an exact release, or a commit SHA.
 - Coverage now includes code run in subprocesses and pytest-xdist workers
   (coverage.py 7.10.3 or later). Under `pytest -n` it used to report 0%, failing
   any threshold and crashing with `warnings-as-errors`.
+- `doctest-paths` entries outside `working-directory` or naming a file other than
+  `.py` are rejected by validation instead of being skipped or crashing the test
+  step. With unittest, directory entries warn about the files they skip because
+  their paths are not module names, such as files under `.github` or a hyphenated
+  directory.
 
 ### Behaviour changes
 
+- With unittest, a malformed doctest under `doctest-paths` now fails the run as a
+  test error naming the file; it used to be skipped silently.
+- With unittest, a `doctest-paths` file entry whose path is not a module name, such
+  as one under a hyphenated directory, now fails validation; it used to be skipped
+  silently. The pytest runner accepts such files.
 - Artifact names for calls with a `working-directory` other than `.`, or with a
   `call-name`, end in `-<call-name>` or `-<working-directory>`. Single calls from
   the repository root keep their names.
