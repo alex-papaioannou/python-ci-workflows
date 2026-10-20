@@ -42,10 +42,12 @@ input or output, changing a default in a way that can fail existing callers, or
 dropping a supported Python version.
 
 Releasing is automated. Add a `## [X.Y.Z]` section at the top of `CHANGELOG.md` in
-the pull request that should ship. When it merges, the `Release` workflow creates
-the `vX.Y.Z` GitHub release from that section and moves the major tag (`vX`) to the
-same commit. If the version is already released it does nothing, so editing older
-changelog entries is safe.
+the pull request that should ship. When it merges, the `Release` workflow runs the
+smoke test, the example consumers and workflow lint again on that exact commit. Only
+if all of them pass does it create the `vX.Y.Z` GitHub release from that section and
+move the major tag (`vX`) to the same commit. Releases run only from `main`, in the
+`release` environment. If the version is already released it does nothing, so editing
+older changelog entries is safe.
 
 ## Development dependencies
 
