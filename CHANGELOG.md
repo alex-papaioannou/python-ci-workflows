@@ -52,6 +52,11 @@ major tag such as `v1`, an exact release, or a commit SHA.
   their paths are not module names, such as files under `.github` or a hyphenated
   directory.
 
+- Scratch environments and build output (pip-audit, wheel tests, `dist`, uv
+  exports, JUnit fallbacks, coverage settings) are created under `RUNNER_TEMP`,
+  which the runner cleans after each job, instead of accumulating in the system
+  temp directory of persistent self-hosted runners.
+
 ### Behaviour changes
 
 - With unittest, a malformed doctest under `doctest-paths` now fails the run as a

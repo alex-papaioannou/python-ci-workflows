@@ -37,6 +37,15 @@ def json_paths(name: str) -> list[str]:
     return json.loads(env(name, '["."]'))
 
 
+def scratch_dir(prefix: str) -> str:
+    """Create a scratch directory under RUNNER_TEMP, which the runner cleans per job.
+
+    Persistent self-hosted runners do not clean the system temp directory, so
+    scratch environments and build outputs must not accumulate there.
+    """
+    return tempfile.mkdtemp(prefix=prefix, dir=os.environ.get("RUNNER_TEMP") or None)
+
+
 def python(*args: str) -> int:
     return subprocess.run([sys.executable, *args], check=False).returncode
 
@@ -310,9 +319,7 @@ def install() -> int:
     requirements = env("REQUIREMENTS_FILE")
     if requirements:
         if is_uv_lock(requirements):
-            exported = os.path.join(
-                tempfile.mkdtemp(prefix="uv-export-"), "requirements.txt"
-            )
+            exported = os.path.join(scratch_dir("uv-export-"), "requirements.txt")
             extra_args = [arg for name in extras() for arg in ("--extra", name)]
             if python(
                 "-m",
@@ -393,7 +400,7 @@ def audit() -> int:
     # the dependencies it is auditing.
     import venv
 
-    tools = tempfile.mkdtemp(prefix="pip-audit-")
+    tools = scratch_dir("pip-audit-")
     venv.EnvBuilder(with_pip=True).create(tools)
     auditor = os.path.join(tools, "Scripts" if os.name == "nt" else "bin", "python")
     install = [
@@ -476,7 +483,7 @@ def compile_sources() -> int:
 def build() -> int:
     tool("build==1.6.1", "build")
     tool("twine==7.0.0", "twine")
-    outdir = tempfile.mkdtemp(prefix="dist-")
+    outdir = scratch_dir("dist-")
     if python("-m", "build", "--outdir", outdir, "."):
         raise SystemExit("Package build failed")
     if python(
@@ -494,7 +501,7 @@ def test_wheel(outdir: str) -> int:
     wheels = glob.glob(os.path.join(outdir, "*.whl"))
     if len(wheels) != 1:
         raise SystemExit(f"Expected one wheel in the build output, found {len(wheels)}")
-    workdir = tempfile.mkdtemp(prefix="wheel-test-")
+    workdir = scratch_dir("wheel-test-")
     venv.EnvBuilder(with_pip=True).create(os.path.join(workdir, "venv"))
     interpreter = os.path.join(
         workdir, "venv", "Scripts" if os.name == "nt" else "bin", "python"
@@ -898,9 +905,7 @@ def junit_outcomes(
 def run_pytest() -> int:
     import pytest  # type: ignore[import-not-found,unused-ignore]
 
-    report = env("JUNIT_FILE") or os.path.join(
-        tempfile.mkdtemp(prefix="pytest-"), "junit.xml"
-    )
+    report = env("JUNIT_FILE") or os.path.join(scratch_dir("pytest-"), "junit.xml")
     verbosity = {"0": ["-q"], "1": [], "2": ["-v"]}[env("TEST_VERBOSITY", "2")]
     # Empty inputs defer to the project's testpaths and python_files settings.
     args = [
@@ -984,7 +989,7 @@ def start_coverage():
 
     # A fresh data directory: children write their fragments there, so nothing lands
     # in the project and stale fragments from earlier runs are never combined.
-    data_dir = tempfile.mkdtemp(prefix="coverage-data-")
+    data_dir = scratch_dir("coverage-")
     atexit.register(shutil.rmtree, data_dir, True)
     data_file = os.path.join(data_dir, ".coverage")
     if coverage.version_info < (7, 10, 3):
