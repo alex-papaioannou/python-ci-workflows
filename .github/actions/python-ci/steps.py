@@ -121,6 +121,104 @@ def runner_slug(label) -> str:
     return re.sub(r'[/\\:<>|*?"\s]+', "-", "-".join(str(part) for part in parts))
 
 
+def matrix_equal(pattern, value) -> bool:
+    """Compare two matrix scalars the way GitHub does when it applies an exclude.
+
+    Strings compare without regard to case; any other pair compares as numbers, so
+    "3.12" matches 3.12.
+    """
+    if isinstance(pattern, str) and isinstance(value, str):
+        return pattern.casefold() == value.casefold()
+
+    def number(item) -> float:
+        if item is None or isinstance(item, (bool, int, float)):
+            return float(item or 0)
+        try:
+            return float(item.strip() or 0)
+        except ValueError:
+            return float("nan")
+
+    return number(pattern) == number(value)
+
+
+def matrix_matches(pattern, value) -> bool:
+    """Return whether an exclude value matches a matrix value under GitHub's rules.
+
+    An object matches any object that has its keys with matching values, and an
+    array matches any array that starts with matching items, so ["self-hosted"]
+    also matches ["self-hosted", "linux"].
+    """
+    if isinstance(pattern, dict):
+        if not isinstance(value, dict):
+            return False
+        keys = {str(key).casefold(): item for key, item in value.items()}
+        return all(
+            str(key).casefold() in keys
+            and matrix_matches(item, keys[str(key).casefold()])
+            for key, item in pattern.items()
+        )
+    if isinstance(pattern, list):
+        return (
+            isinstance(value, list)
+            and len(pattern) <= len(value)
+            and all(matrix_matches(p, v) for p, v in zip(pattern, value))
+        )
+    return not isinstance(value, (dict, list)) and matrix_equal(pattern, value)
+
+
+def check_matrix_exclude(systems: list, versions: list, primary_version: str) -> None:
+    """Validate matrix-exclude against the matrix it trims, matching as GitHub does."""
+    excluded = json_list("MATRIX_EXCLUDE", "[]")
+    cells = [(system, version) for system in systems for version in versions]
+    for entry in excluded:
+        if (
+            not isinstance(entry, dict)
+            or not entry
+            or set(entry) - {"os", "python-version"}
+        ):
+            raise SystemExit(
+                f"matrix-exclude entry {json.dumps(entry)} must be an object with only "
+                "'os' and/or 'python-version' keys"
+            )
+        if "os" in entry and not any(matrix_matches(entry["os"], s) for s in systems):
+            raise SystemExit(
+                f"matrix-exclude entry {json.dumps(entry)} names an os not in operating-systems"
+            )
+        if "python-version" in entry and not any(
+            matrix_matches(entry["python-version"], v) for v in versions
+        ):
+            raise SystemExit(
+                f"matrix-exclude entry {json.dumps(entry)} names a version not in python-versions"
+            )
+        cells = [
+            (system, version)
+            for system, version in cells
+            if not (
+                ("os" not in entry or matrix_matches(entry["os"], system))
+                and (
+                    "python-version" not in entry
+                    or matrix_matches(entry["python-version"], version)
+                )
+            )
+        ]
+    if excluded and not cells:
+        raise SystemExit("matrix-exclude removes every matrix cell")
+    if (
+        excluded
+        and systems
+        and not any(
+            system == systems[0] and str(version) == primary_version
+            for system, version in cells
+        )
+    ):
+        raise SystemExit(
+            "matrix-exclude removes the primary cell (the first operating system with the "
+            "first non-experimental Python version), which runs Ruff, pip-audit and the "
+            "build. GitHub matches excludes loosely: strings ignore case, and an array or "
+            "object also matches runners it is a prefix or subset of."
+        )
+
+
 def matrix_cell() -> dict[str, str]:
     """Describe this job's matrix cell and whether it runs the once-per-run checks.
 
@@ -155,6 +253,7 @@ def matrix_cell() -> dict[str, str]:
             "experimental-python-versions, so no failure can fail the run"
         )
     primary_version = (stable or versions)[0] if versions else ""
+    check_matrix_exclude(systems, json_list("PYTHON_VERSIONS", "[]"), primary_version)
     if not env("MATRIX_PYTHON"):
         # Outside a matrix (for example a local run), this is the only cell.
         return {
@@ -273,6 +372,8 @@ def validate() -> int:
         )
     if flag("TEST_WHEEL") and not flag("BUILD_PACKAGE"):
         raise SystemExit("test-wheel requires build-package: true")
+    if flag("UPLOAD_DIST") and not flag("BUILD_PACKAGE"):
+        raise SystemExit("upload-dist requires build-package: true")
     if flag("BUILD_PACKAGE") and not Path("pyproject.toml").is_file():
         raise SystemExit("build-package requires pyproject.toml in working-directory")
     if env("TEST_VERBOSITY", "2") not in ("0", "1", "2"):
@@ -490,10 +591,19 @@ def compile_sources() -> int:
     return 0 if ok else 1
 
 
+DIST_DIRECTORY = "python-ci-dist"
+
+
 def build() -> int:
+    import shutil
+
     tool("build==1.6.1", "build")
     tool("twine==7.0.0", "twine")
-    outdir = scratch_dir("dist-")
+    # A fixed directory under RUNNER_TEMP, so the workflow can upload it afterwards.
+    outdir = os.path.join(
+        os.environ.get("RUNNER_TEMP") or tempfile.gettempdir(), DIST_DIRECTORY
+    )
+    shutil.rmtree(outdir, ignore_errors=True)
     if python("-m", "build", "--outdir", outdir, "."):
         raise SystemExit("Package build failed")
     if python(

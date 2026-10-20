@@ -73,6 +73,7 @@ inside the checkout. JSON arrays are passed as strings.
 | --- | --- | --- | --- |
 | `python-versions` | string | `["3.11", "3.12", "3.13", "3.14"]` | JSON array of Python versions. Append `t` for a free-threaded (no-GIL) build, such as `3.14t`. Python 3.11 is the oldest supported version; older entries produce a warning. |
 | `operating-systems` | string | `["ubuntu-latest"]` | JSON array of runners. Each entry is a label, an array of labels such as `["self-hosted", "linux"]`, or a runner-group object such as `{"group": "large"}`. Every step runs through Python, so Windows and macOS need no shell changes. |
+| `matrix-exclude` | string | `[]` | JSON array of cells to skip, each `{"os": ..., "python-version": ...}` with one or both keys, such as `[{"os": "windows-latest", "python-version": "3.12"}]`. Entries match as GitHub matches them: strings ignore case, and an array or object also matches runners it is a prefix or subset of. Validation rejects entries that match nothing and refuses to exclude the primary cell. |
 | `allow-prereleases` | boolean | `false` | Let `setup-python` install alpha, beta and release-candidate versions. |
 | `experimental-python-versions` | string | `[]` | JSON array of matrix versions whose failures do not fail the run. |
 | `max-parallel` | number | `256` | Maximum simultaneous matrix jobs. The default, GitHub's matrix maximum, runs every cell at once; set a lower number to throttle. |
@@ -136,6 +137,55 @@ inside the checkout. JSON arrays are passed as strings.
 | `coverage-fail-under` | number | `0` | Fail when total coverage is below this percentage. |
 | `test-wheel` | boolean | `false` | After building, install the wheel (with `project-extras` and a `.txt` `requirements-file`) in a fresh virtual environment and run only a copy of the tests against it. This catches files missing from the wheel and broken package discovery. Requires `build-package`. |
 | `build-package` | boolean | `false` | Build an sdist and wheel and run `twine check --strict`, once per run on the primary cell. Requires `pyproject.toml`. Nothing is published. |
+| `upload-dist` | boolean | `false` | After a successful build (and wheel tests, when enabled), upload the files as the `dist` artifact, plus the call suffix, for a publish job in your own workflow. Requires `build-package`. |
+
+### Trimming the matrix
+
+Run every version on Linux and only the oldest and newest elsewhere:
+
+```yaml
+    with:
+      python-versions: '["3.11", "3.12", "3.13", "3.14"]'
+      operating-systems: '["ubuntu-latest", "windows-latest", "macos-latest"]'
+      matrix-exclude: >-
+        [{"os": "windows-latest", "python-version": "3.12"},
+         {"os": "windows-latest", "python-version": "3.13"},
+         {"os": "macos-latest", "python-version": "3.12"},
+         {"os": "macos-latest", "python-version": "3.13"}]
+```
+
+### Publishing to PyPI
+
+PyPI trusted publishing cannot run inside a reusable workflow, so the workflow only
+builds and, with `upload-dist`, uploads the `dist` artifact; publish it from a job in
+your own workflow.
+This suits pure-Python packages; projects with compiled extensions need their own
+wheel builds. Because this job can publish, consider pinning the workflow to a full
+commit SHA instead of `@v1` (see "Choosing a ref"); zizmor's `unpinned-uses` audit
+flags the tag.
+
+```yaml
+jobs:
+  python:
+    uses: alex-papaioannou/python-ci-workflows/.github/workflows/python-ci.yml@v1
+    with:
+      build-package: true
+      test-wheel: true
+      upload-dist: true
+  publish:
+    needs: python
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    environment: pypi
+    permissions:
+      id-token: write
+    steps:
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: dist
+          path: dist
+      - uses: pypa/gh-action-pypi-publish@7245906fb61fa33a13554f9d5fb856fe61758086 # v1.14.3
+```
 
 ### Calling the workflow more than once
 

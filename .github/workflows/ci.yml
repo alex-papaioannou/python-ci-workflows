@@ -19,6 +19,8 @@ jobs:
       operating-systems: '["ubuntu-latest", "windows-latest", "macos-latest"]'
       python-versions: '["3.11", "3.12", "3.13", "3.14", "3.14t", "3.15"]'
       experimental-python-versions: '["3.14t"]'
+      # Free-threaded builds on Linux only.
+      matrix-exclude: '[{"os": "windows-latest", "python-version": "3.14t"}, {"os": "macos-latest", "python-version": "3.14t"}]'
       mypy-version: "2.4.0"
       lint-paths: '["tests", ".github/actions/python-ci", ".github/scripts"]'
       requirements-file: requirements-dev.txt
