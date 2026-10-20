@@ -10,16 +10,16 @@ concurrency:
   group: release
   cancel-in-progress: false
 jobs:
-  # The checks below run on the exact commit being released. Releases happen only
-  # from main in this repository, and only after every check passes.
+  # The checks below run on the exact commit being released. They are read-only,
+  # so forks may run them too; only the release job is limited to this repository.
   ci:
-    if: github.repository == 'alex-papaioannou/python-ci-workflows' && github.ref == 'refs/heads/main'
+    if: github.ref == 'refs/heads/main'
     uses: ./.github/workflows/ci.yml
   examples:
-    if: github.repository == 'alex-papaioannou/python-ci-workflows' && github.ref == 'refs/heads/main'
+    if: github.ref == 'refs/heads/main'
     uses: ./.github/workflows/examples.yml
   lint:
-    if: github.repository == 'alex-papaioannou/python-ci-workflows' && github.ref == 'refs/heads/main'
+    if: github.ref == 'refs/heads/main'
     uses: ./.github/workflows/workflow-lint.yml
   release:
     needs: [ci, examples, lint]
@@ -48,24 +48,84 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+          # The parent commit tells whether this commit introduced the version.
+          fetch-depth: 2
+      - name: List existing releases
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release list --repo "$GITHUB_REPOSITORY" --limit 1000 --json tagName --jq '.[].tagName' > "$RUNNER_TEMP/released.txt"
+          git show HEAD^:CHANGELOG.md > "$RUNNER_TEMP/previous-changelog.md" 2> /dev/null || true
       - name: Read the newest changelog entry
         id: notes
-        run: python3 .github/scripts/release_notes.py "$RUNNER_TEMP/notes.md"
+        run: python3 .github/scripts/release_notes.py "$RUNNER_TEMP/notes.md" "$RUNNER_TEMP/released.txt" "$RUNNER_TEMP/previous-changelog.md"
       - name: Publish the release and move the major tag
         env:
           GH_TOKEN: ${{ github.token }}
           VERSION: ${{ steps.notes.outputs.version }}
           MAJOR: ${{ steps.notes.outputs.major }}
+          INTRODUCED: ${{ steps.notes.outputs.introduced }}
+          EVENT: ${{ github.event_name }}
         run: |
-          if gh release view "v$VERSION" --repo "$GITHUB_REPOSITORY" > /dev/null 2>&1; then
-            echo "v$VERSION is already released; nothing to do."
-            exit 0
-          fi
-          gh release create "v$VERSION" --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" \
-            --title "v$VERSION" --notes-file "$RUNNER_TEMP/notes.md" --latest
-          if gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/$MAJOR" > /dev/null 2>&1; then
-            gh api -X PATCH "repos/$GITHUB_REPOSITORY/git/refs/tags/$MAJOR" -f sha="$GITHUB_SHA" -F force=true
+          tag="v$VERSION"
+          # Print the commit a tag points at, following annotated tags. Exit 2 when
+          # the tag does not exist and 1 on any other error, so outages never look
+          # like a missing tag.
+          tag_commit() {
+            local object err
+            err=$(mktemp)
+            if ! object=$(gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/$1" --jq '.object.type + " " + .object.sha' 2> "$err"); then
+              if grep -q "HTTP 404" "$err"; then return 2; fi
+              cat "$err" >&2
+              return 1
+            fi
+            if [ "${object%% *}" = tag ]; then
+              gh api "repos/$GITHUB_REPOSITORY/git/tags/${object#* }" --jq .object.sha
+            else
+              echo "${object#* }"
+            fi
+          }
+          created=false
+          if gh release view "$tag" --repo "$GITHUB_REPOSITORY" > /dev/null 2>&1; then
+            target=$(tag_commit "$tag")
           else
-            gh api -X POST "repos/$GITHUB_REPOSITORY/git/refs" -f ref="refs/tags/$MAJOR" -f sha="$GITHUB_SHA"
+            if [ "$INTRODUCED" != true ] && [ "$EVENT" != workflow_dispatch ]; then
+              echo "::error::$tag is not released, but this commit did not add it to CHANGELOG.md. Re-run the Release run of the commit that did, or run Release manually from main."
+              exit 1
+            fi
+            status=0
+            existing=$(tag_commit "$tag") || status=$?
+            if [ "$status" = 0 ] && [ "$existing" != "$GITHUB_SHA" ]; then
+              echo "::error::Tag $tag already exists at $existing, not at $GITHUB_SHA; refusing to release."
+              exit 1
+            elif [ "$status" = 1 ]; then
+              exit 1
+            fi
+            gh release create "$tag" --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" \
+              --title "$tag" --notes-file "$RUNNER_TEMP/notes.md" --latest
+            target=$(tag_commit "$tag")
+            if [ "$target" != "$GITHUB_SHA" ]; then
+              echo "::error::$tag points at $target after the release, not at $GITHUB_SHA."
+              exit 1
+            fi
+            created=true
+            echo "Released $tag at $target." >> "$GITHUB_STEP_SUMMARY"
           fi
-          echo "Released v$VERSION and pointed $MAJOR at $GITHUB_SHA"
+          status=0
+          current=$(tag_commit "$MAJOR") || status=$?
+          if [ "$status" = 1 ]; then
+            exit 1
+          elif [ "$status" = 2 ]; then
+            gh api -X POST "repos/$GITHUB_REPOSITORY/git/refs" -f ref="refs/tags/$MAJOR" -f sha="$target" > /dev/null
+            echo "::notice::Created $MAJOR at $target ($tag)."
+          elif [ "$current" = "$target" ]; then
+            [ "$created" = true ] || echo "No new release: $tag is already published and $MAJOR points at it." >> "$GITHUB_STEP_SUMMARY"
+          elif [ "$created" = true ] || [ "$target" = "$GITHUB_SHA" ] || [ "$EVENT" = workflow_dispatch ]; then
+            # Move the major tag for a new release, a re-run of the run that created
+            # it, or an explicit manual run. Ordinary pushes leave a deliberately
+            # rolled-back major tag alone.
+            gh api -X PATCH "repos/$GITHUB_REPOSITORY/git/refs/tags/$MAJOR" -f sha="$target" -F force=true > /dev/null
+            echo "::notice::Moved $MAJOR from $current to $target ($tag)."
+          else
+            echo "::warning::$MAJOR points at $current, not at $tag ($target). Run Release manually from main to move it."
+          fi
