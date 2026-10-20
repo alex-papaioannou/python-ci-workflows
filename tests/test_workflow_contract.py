@@ -546,6 +546,54 @@ class WorkflowTests(StepHarness, unittest.TestCase):
                 )
                 self.assertEqual(result.returncode, 0, result.stderr)
 
+    def test_matrix_exclude_matches_like_github(self):
+        # GitHub matches strings without case, arrays by prefix and objects by subset.
+        arrays = '[["self-hosted", "linux", "gpu"], ["self-hosted", "linux"]]'
+        groups = '[{"group": "ci", "labels": ["linux", "x64"]}, {"group": "ci", "labels": ["linux"]}]'
+        cases = (
+            (
+                arrays,
+                '[{"os": ["self-hosted", "linux"], "python-version": "3.12"}]',
+                False,
+            ),
+            (
+                arrays,
+                '[{"os": ["self-hosted", "linux", "gpu"], "python-version": "3.13"}]',
+                True,
+            ),
+            (
+                groups,
+                '[{"os": {"group": "ci", "labels": ["linux"]}, "python-version": "3.12"}]',
+                False,
+            ),
+            (groups, '[{"os": {"group": "CI"}, "python-version": "3.13"}]', True),
+            ('["ubuntu-latest", "windows-latest"]', '[{"os": "Windows-Latest"}]', True),
+            (
+                '["ubuntu-latest", "windows-latest"]',
+                '[{"os": "Ubuntu-Latest", "python-version": "3.12"}]',
+                False,
+            ),
+            (
+                '["ubuntu-latest", "windows-latest"]',
+                '[{"os": "windows-latest", "python-version": 3.13}]',
+                True,
+            ),
+        )
+        for systems, exclude, ok in cases:
+            with self.subTest(systems=systems, exclude=exclude):
+                result = self.execute(
+                    {"tests/test_ok.py": ""},
+                    {
+                        "OPERATING_SYSTEMS": systems,
+                        "PYTHON_VERSIONS": '["3.12", "3.13"]',
+                        "MATRIX_EXCLUDE": exclude,
+                    },
+                    step="Validate inputs",
+                )
+                self.assertEqual(result.returncode == 0, ok, result.stderr)
+                if not ok:
+                    self.assertIn("removes the primary cell", result.stderr)
+
     def test_matrix_exclude_is_wired_into_the_matrix(self):
         self.assertIn(
             "exclude: ${{ fromJSON(inputs.matrix-exclude) }}", WORKFLOW.read_text()
@@ -1245,19 +1293,26 @@ class WheelTests(StepHarness, unittest.TestCase):
         block = text[text.index("- name: Upload distributions") :].split(
             "\n      - ", 1
         )[0]
+        # Opt-in, so existing callers that upload their own "dist" do not collide.
         self.assertIn(
-            "if: inputs.build-package && steps.validate.outputs.primary == 'true'",
+            "if: inputs.upload-dist && steps.validate.outputs.primary == 'true'",
             block,
         )
         self.assertNotIn("always()", block)
         self.assertIn("path: ${{ runner.temp }}/python-ci-dist", block)
         self.assertIn("name: dist${{ steps.validate.outputs.artifact-suffix }}", block)
 
-    def test_wheel_requires_build(self):
-        result = self.execute(
-            {"tests/test_ok.py": ""}, {"TEST_WHEEL": "true"}, step="Validate inputs"
-        )
-        self.assertNotEqual(result.returncode, 0)
+    def test_wheel_tests_and_dist_upload_require_build(self):
+        for name, label in (
+            ("TEST_WHEEL", "test-wheel"),
+            ("UPLOAD_DIST", "upload-dist"),
+        ):
+            with self.subTest(name=name):
+                result = self.execute(
+                    {"tests/test_ok.py": ""}, {name: "true"}, step="Validate inputs"
+                )
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn(f"{label} requires build-package: true", result.stderr)
 
 
 class DoctestAndTimingTests(StepHarness, unittest.TestCase):

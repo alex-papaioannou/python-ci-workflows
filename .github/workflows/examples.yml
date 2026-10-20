@@ -30,6 +30,7 @@ jobs:
       project-extras: test
       build-package: true
       test-wheel: true
+      upload-dist: true
       # Shares ubuntu-latest cells with stdlib-app, so artifact names must differ.
       junit-file: test-results/junit.xml
       coverage-version: "7.16.2"

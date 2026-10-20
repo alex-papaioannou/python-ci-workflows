@@ -166,6 +166,10 @@ on:
         description: "Also run the tests against the built wheel in a clean environment"
         type: boolean
         default: false
+      upload-dist:
+        description: "Upload the built distributions as the dist artifact for a publish job in the calling workflow"
+        type: boolean
+        default: false
       doctest-paths:
         description: "JSON array of modules or directories whose docstring examples run as tests"
         type: string
@@ -242,6 +246,7 @@ jobs:
           AUDIT_VERSION: ${{ inputs.audit-version }}
           AUDIT_IGNORE: ${{ inputs.audit-ignore }}
           TEST_WHEEL: ${{ inputs.test-wheel }}
+          UPLOAD_DIST: ${{ inputs.upload-dist }}
           DOCTEST_PATHS: ${{ inputs.doctest-paths }}
         run: python "$PYTHON_CI_STEPS" validate
       - name: Install dependencies
@@ -292,7 +297,7 @@ jobs:
           TEST_PATTERN: ${{ inputs.test-pattern }}
         run: python "$PYTHON_CI_STEPS" build
       - name: Upload distributions
-        if: inputs.build-package && steps.validate.outputs.primary == 'true'
+        if: inputs.upload-dist && steps.validate.outputs.primary == 'true'
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: dist${{ steps.validate.outputs.artifact-suffix }}
