@@ -299,6 +299,33 @@ class WorkflowTests(StepHarness, unittest.TestCase):
         self.assertIn("cancel-in-progress: ${{ inputs.cancel-in-progress }}", text)
         self.assertIn("github.run_id, github.run_attempt", text)
 
+    def test_concurrency_groups_are_scoped_to_each_call(self):
+        group = re.search(
+            r"^      group: (.*)$", WORKFLOW.read_text(), re.MULTILINE
+        ).group(1)
+        branches = group.split(" || ")
+        self.assertEqual(len(branches), 2)
+        for branch in branches:
+            self.assertIn("inputs.working-directory, inputs.call-name", branch)
+
+    def test_call_name_validated(self):
+        for value, ok in (
+            ("api", True),
+            ("svc-1.web_2", True),
+            ("", True),
+            ("a/b", False),
+            ("a b", False),
+        ):
+            with self.subTest(value=value):
+                result = self.execute(
+                    {"tests/test_ok.py": ""},
+                    {"CALL_NAME": value},
+                    step="Validate inputs",
+                )
+                self.assertEqual(result.returncode == 0, ok, result.stderr)
+                if not ok:
+                    self.assertIn("call-name", result.stderr)
+
     def test_junit_report_and_step_summary(self):
         import xml.etree.ElementTree as ET
 

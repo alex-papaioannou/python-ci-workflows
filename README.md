@@ -77,7 +77,8 @@ inside the checkout. JSON arrays are passed as strings.
 | `experimental-python-versions` | string | `[]` | JSON array of matrix versions whose failures do not fail the run. |
 | `max-parallel` | number | `3` | Maximum simultaneous matrix jobs. |
 | `timeout-minutes` | number | `10` | Per-job timeout, a whole number from 1 to 360. |
-| `cancel-in-progress` | boolean | `false` | Cancel older in-flight jobs for the same workflow and ref when a new run starts. |
+| `cancel-in-progress` | boolean | `false` | Cancel older in-flight jobs for the same workflow, ref and call when a new run starts. |
+| `call-name` | string | `""` | Name for this call when one caller workflow calls the workflow more than once with the same `working-directory`. Letters, digits, `.`, `_` and `-`. |
 | `working-directory` | string | `.` | Project directory inside the checkout, for monorepos. |
 
 ### Dependencies
@@ -134,6 +135,29 @@ inside the checkout. JSON arrays are passed as strings.
 | `coverage-fail-under` | number | `0` | Fail when total coverage is below this percentage. |
 | `test-wheel` | boolean | `false` | After building, install the wheel (with `project-extras` and a `.txt` `requirements-file`) in a fresh virtual environment and run only a copy of the tests against it. This catches files missing from the wheel and broken package discovery. Requires `build-package`. |
 | `build-package` | boolean | `false` | Build an sdist and wheel and run `twine check --strict`, once per run. Requires `pyproject.toml`. Nothing is published. |
+
+### Calling the workflow more than once
+
+A monorepo can call the workflow once per project from a single caller workflow.
+Each call's jobs are scoped by `working-directory`, so calls for different projects
+run side by side and `cancel-in-progress` only cancels older runs of the same call.
+Give calls that share a `working-directory` a distinct `call-name`:
+
+```yaml
+jobs:
+  api:
+    uses: alex-papaioannou/python-ci-workflows/.github/workflows/python-ci.yml@v1
+    with:
+      working-directory: services/api
+  web:
+    uses: alex-papaioannou/python-ci-workflows/.github/workflows/python-ci.yml@v1
+    with:
+      working-directory: services/web
+```
+
+To serialize or cancel whole caller runs instead, set `concurrency:` on the caller
+workflow itself, for example
+`concurrency: {group: ci-${{ github.ref }}, cancel-in-progress: true}`.
 
 ## Outputs and required checks
 

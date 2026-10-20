@@ -3,6 +3,30 @@
 This project follows [semantic versioning](https://semver.org/). Consumers can pin a
 major tag such as `v1`, an exact release, or a commit SHA.
 
+## [Unreleased]
+
+### Added
+
+- `call-name` input to tell apart several calls from one caller workflow.
+
+### Fixed
+
+- Several calls of the workflow from one caller workflow no longer share matrix
+  concurrency groups. Calls for different `working-directory` values used to run one
+  after another, could cancel each other's pending jobs, and with
+  `cancel-in-progress: true` could cancel each other's running jobs.
+
+### Security
+
+- `actions/checkout` 7.0.1, `actions/setup-python` 7.0.0 and
+  `actions/upload-artifact` 7.0.2, still pinned to full commit SHAs.
+- SECURITY.md now states which installs are hash-checked and which are pinned by
+  version only, and that the major tag moves on every release.
+- Dependabot updates for the pinned actions and the development requirements now
+  run; the previous configuration was invalid.
+- The workflow files, the composite action and the Dependabot configuration are
+  linted strictly, including zizmor's online audits of the pinned SHAs.
+
 ## [1.0.0]
 
 First tagged release.

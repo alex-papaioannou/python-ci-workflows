@@ -136,6 +136,8 @@ def validate() -> int:
         raise SystemExit("build-package requires pyproject.toml in working-directory")
     if env("TEST_VERBOSITY", "2") not in ("0", "1", "2"):
         raise SystemExit("test-verbosity must be 0, 1, or 2")
+    if not re.fullmatch(r"[A-Za-z0-9._-]*", env("CALL_NAME")):
+        raise SystemExit("call-name may contain only letters, digits, '.', '_' and '-'")
     if env("TEST_RUNNER", "unittest") not in ("unittest", "pytest"):
         raise SystemExit("test-runner must be unittest or pytest")
     if not VERSION.fullmatch(env("PYTEST_VERSION")) or (
