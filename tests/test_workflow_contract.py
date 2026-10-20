@@ -45,6 +45,7 @@ class StepHarness:
             process_env = os.environ.copy()
             process_env["GITHUB_WORKSPACE"] = str(root)
             process_env["GITHUB_STEP_SUMMARY"] = os.devnull
+            process_env["GITHUB_OUTPUT"] = os.devnull
             process_env.update(env or {})
             return subprocess.run(
                 [executable, str(STEPS), script(step)],
@@ -307,6 +308,41 @@ class WorkflowTests(StepHarness, unittest.TestCase):
         self.assertEqual(len(branches), 2)
         for branch in branches:
             self.assertIn("inputs.working-directory, inputs.call-name", branch)
+
+    def test_artifact_suffix_keeps_names_unique_per_call(self):
+        cases = (
+            ({}, ""),
+            ({"WORKING_DIRECTORY": "."}, ""),
+            ({"WORKING_DIRECTORY": "./"}, ""),
+            ({"WORKING_DIRECTORY": "examples/src-package"}, "-examples-src-package"),
+            ({"WORKING_DIRECTORY": "./services/api/"}, "-services-api"),
+            (
+                {"WORKING_DIRECTORY": "services/api", "CALL_NAME": "api-lint"},
+                "-api-lint",
+            ),
+        )
+        for env, suffix in cases:
+            with self.subTest(env=env), tempfile.TemporaryDirectory() as out:
+                output = Path(out) / "output"
+                result = self.execute(
+                    {"tests/test_ok.py": ""},
+                    {**env, "GITHUB_OUTPUT": str(output)},
+                    step="Validate inputs",
+                )
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertEqual(
+                    output.read_text(encoding="utf-8"), f"artifact-suffix={suffix}\n"
+                )
+
+    def test_uploaded_artifact_names_use_the_suffix(self):
+        names = re.findall(
+            r"^          name: (.*)$", WORKFLOW.read_text(), re.MULTILINE
+        )
+        self.assertTrue(names)
+        for name in names:
+            self.assertTrue(
+                name.endswith("${{ steps.validate.outputs.artifact-suffix }}"), name
+            )
 
     def test_call_name_validated(self):
         for value, ok in (

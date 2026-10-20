@@ -16,6 +16,7 @@ jobs:
       coverage-version: "7.16.2"
       coverage-fail-under: 100
       warnings-as-errors: true
+      junit-file: test-results/junit.xml
   src-package:
     uses: ./.github/workflows/python-ci.yml
     with:
@@ -28,6 +29,9 @@ jobs:
       build-package: true
       test-wheel: true
       max-parallel: 4
+      # Shares ubuntu-latest cells with stdlib-app, so artifact names must differ.
+      junit-file: test-results/junit.xml
+      coverage-version: "7.16.2"
   uv-project:
     uses: ./.github/workflows/python-ci.yml
     with:

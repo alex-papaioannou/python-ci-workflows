@@ -71,6 +71,25 @@ def validate_path_list(name: str, label: str, missing: str) -> None:
             raise SystemExit(f"{missing} does not exist: {path}")
 
 
+def artifact_suffix() -> str:
+    """Return the suffix that keeps artifact names unique per workflow call."""
+    if env("CALL_NAME"):
+        return "-" + env("CALL_NAME")
+    directory = (
+        os.path.normpath(env("WORKING_DIRECTORY", ".")).replace("\\", "/").strip("/")
+    )
+    if directory in ("", "."):
+        return ""
+    # Artifact names may not contain path separators or a few other characters.
+    return "-" + re.sub(r'[/:<>|*?"]+', "-", directory)
+
+
+def write_outputs(values: dict[str, str]) -> None:
+    if env("GITHUB_OUTPUT"):
+        with open(env("GITHUB_OUTPUT"), "a", encoding="utf-8") as output:
+            output.writelines(f"{key}={value}\n" for key, value in values.items())
+
+
 def validate() -> int:
     for key in ("TEST_DIRECTORY", "TOP_LEVEL_DIRECTORY"):
         value = env(key)
@@ -156,6 +175,7 @@ def validate() -> int:
     if not pattern or "/" in pattern or "\\" in pattern:
         raise SystemExit("test-pattern must be a nonempty filename glob")
     re.compile(env("COMPILE_EXCLUDE"))
+    write_outputs({"artifact-suffix": artifact_suffix()})
     return 0
 
 

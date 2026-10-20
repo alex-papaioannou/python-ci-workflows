@@ -114,7 +114,7 @@ inside the checkout. JSON arrays are passed as strings.
 | `doctest-paths` | string | `[]` | JSON array of modules or package directories whose docstring examples also run as tests, through `doctest` with unittest or `--doctest-modules` with pytest. |
 | `warnings-as-errors` | boolean | `false` | Set `PYTHONWARNINGS=error` for every step. |
 | `hash-seed` | string | `0` | `PYTHONHASHSEED`: `random` or an integer from 0 to 4294967295. |
-| `junit-file` | string | `""` | Write a JUnit XML report here and upload it as `junit-<os>-<python>`. |
+| `junit-file` | string | `""` | Write a JUnit XML report here and upload it as `junit-<os>-<python>`, plus the call suffix described under "Calling the workflow more than once". |
 
 ### Syntax, lint and type checks
 
@@ -154,6 +154,11 @@ jobs:
     with:
       working-directory: services/web
 ```
+
+Uploaded artifacts are named after the matrix cell and the call, so calls never
+collide: `junit-<os>-<python>` and `coverage-<os>-<python>` gain `-<call-name>`, or
+otherwise `-<working-directory>` with `/` replaced by `-`. A single call with the
+default `working-directory: .` keeps the plain names.
 
 To serialize or cancel whole caller runs instead, set `concurrency:` on the caller
 workflow itself, for example
