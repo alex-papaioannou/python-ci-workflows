@@ -43,7 +43,10 @@ def scratch_dir(prefix: str) -> str:
     Persistent self-hosted runners do not clean the system temp directory, so
     scratch environments and build outputs must not accumulate there.
     """
-    return tempfile.mkdtemp(prefix=prefix, dir=os.environ.get("RUNNER_TEMP") or None)
+    base = os.environ.get("RUNNER_TEMP") or None
+    if base:
+        os.makedirs(base, exist_ok=True)
+    return tempfile.mkdtemp(prefix=prefix, dir=base)
 
 
 def python(*args: str) -> int:

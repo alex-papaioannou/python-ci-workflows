@@ -51,11 +51,10 @@ major tag such as `v1`, an exact release, or a commit SHA.
   step. With unittest, directory entries warn about the files they skip because
   their paths are not module names, such as files under `.github` or a hyphenated
   directory.
-
 - Scratch environments and build output (pip-audit, wheel tests, `dist`, uv
-  exports, JUnit fallbacks, coverage settings) are created under `RUNNER_TEMP`,
-  which the runner cleans after each job, instead of accumulating in the system
-  temp directory of persistent self-hosted runners.
+  exports, JUnit fallbacks, coverage data) are created under `RUNNER_TEMP`, which
+  the runner cleans after each job, instead of accumulating in the system temp
+  directory of persistent self-hosted runners.
 
 ### Behaviour changes
 

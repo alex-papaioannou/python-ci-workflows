@@ -1,0 +1,3 @@
+# Measure the code this repository ships, not its own tests.
+[run]
+omit = tests/*

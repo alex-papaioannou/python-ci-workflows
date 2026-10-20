@@ -47,6 +47,43 @@ def script(name):
 
 
 class StepHarness:
+    def run_step(self, root, step, env=None, executable=sys.executable, cwd=None):
+        """Run a step script with its own RUNNER_TEMP and system temp directory.
+
+        Steps must leave nothing in the system temp directory, which persistent
+        self-hosted runners never clean; scratch files belong under RUNNER_TEMP.
+        """
+        runner_temp = tempfile.mkdtemp(prefix="runner-temp-")
+        system_temp = tempfile.mkdtemp(prefix="system-temp-")
+        for path in (runner_temp, system_temp):
+            self.addCleanup(shutil.rmtree, path, ignore_errors=True)
+        process_env = clean_environment(
+            GITHUB_WORKSPACE=str(root),
+            GITHUB_STEP_SUMMARY=os.devnull,
+            GITHUB_OUTPUT=os.devnull,
+            RUNNER_TEMP=runner_temp,
+            TMPDIR=system_temp,
+            TEMP=system_temp,
+            TMP=system_temp,
+        )
+        process_env.update(env or {})
+        result = subprocess.run(
+            [executable, str(STEPS), script(step)],
+            check=False,
+            cwd=cwd or root,
+            env=process_env,
+            text=True,
+            capture_output=True,
+        )
+        # pytest keeps its tmp_path base directories there and prunes old ones itself.
+        leaked = sorted(
+            p.name
+            for p in Path(system_temp).iterdir()
+            if not p.name.startswith("pytest-of-")
+        )
+        self.assertEqual(leaked, [], f"{step} left files in the system temp directory")
+        return result
+
     def execute(
         self,
         files,
@@ -61,22 +98,8 @@ class StepHarness:
                 path = root / name
                 path.parent.mkdir(parents=True, exist_ok=True)
                 path.write_text(content)
-            runner_temp = tempfile.mkdtemp(prefix="runner-temp-")
-            self.addCleanup(shutil.rmtree, runner_temp, ignore_errors=True)
-            process_env = clean_environment(
-                GITHUB_WORKSPACE=str(root),
-                GITHUB_STEP_SUMMARY=os.devnull,
-                GITHUB_OUTPUT=os.devnull,
-                RUNNER_TEMP=runner_temp,
-            )
-            process_env.update(env or {})
-            return subprocess.run(
-                [executable, str(STEPS), script(step)],
-                check=False,
-                cwd=root / working_directory,
-                env=process_env,
-                text=True,
-                capture_output=True,
+            return self.run_step(
+                root, step, env, executable, cwd=root / working_directory
             )
 
 
@@ -632,27 +655,7 @@ class WorkflowTests(StepHarness, unittest.TestCase):
                 path = root / name
                 path.parent.mkdir(parents=True, exist_ok=True)
                 path.write_text(content)
-            runner_temp = tempfile.mkdtemp(prefix="runner-temp-")
-            self.addCleanup(shutil.rmtree, runner_temp, ignore_errors=True)
-            process_env = clean_environment(
-                GITHUB_WORKSPACE=str(root),
-                GITHUB_STEP_SUMMARY=os.devnull,
-                GITHUB_OUTPUT=os.devnull,
-                RUNNER_TEMP=runner_temp,
-                **env,
-            )
-            result = subprocess.run(
-                [
-                    sys.executable,
-                    str(STEPS),
-                    script("Run tests and reject empty test suites"),
-                ],
-                check=False,
-                cwd=root,
-                env=process_env,
-                text=True,
-                capture_output=True,
-            )
+            result = self.run_step(root, "Run tests and reject empty test suites", env)
             self.leftover = sorted(p.name for p in root.glob(".coverage.*"))
             return result
 
@@ -1416,33 +1419,11 @@ class HarnessIsolationTests(StepHarness, unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn("Ran 1 test", result.stderr)
 
-    def test_scratch_directories_stay_out_of_the_system_temp_directory(self):
-        prefixes = (
-            "pip-audit-",
-            "wheel-test-",
-            "dist-",
-            "uv-export-",
-            "pytest-",
-            "coverage-",
-        )
-        before = {
-            p.name
-            for p in Path(tempfile.gettempdir()).iterdir()
-            if p.name.startswith(prefixes)
-        }
-        files = {"tests/test_ok.py": "def test_ok():\n    pass\n"}
-        if importlib.util.find_spec("pytest"):
-            self.assertEqual(self.execute(files, PYTEST).returncode, 0)
-        if importlib.util.find_spec("coverage"):
-            self.assertEqual(
-                self.execute(
-                    files, {**PYTEST, "COVERAGE_VERSION": "7.16.2"}
-                ).returncode,
-                0,
-            )
-        after = {
-            p.name
-            for p in Path(tempfile.gettempdir()).iterdir()
-            if p.name.startswith(prefixes)
-        }
-        self.assertEqual(after - before, set())
+    def test_a_missing_runner_temp_directory_is_created(self):
+        steps = load_steps()
+        with tempfile.TemporaryDirectory() as parent:
+            missing = os.path.join(parent, "runner", "temp")
+            with unittest.mock.patch.dict(os.environ, {"RUNNER_TEMP": missing}):
+                scratch = steps.scratch_dir("x-")
+            self.assertEqual(os.path.dirname(scratch), missing)
+            self.assertTrue(os.path.isdir(scratch))
