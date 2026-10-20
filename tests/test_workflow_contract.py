@@ -8,11 +8,29 @@ import subprocess
 import sys
 import tempfile
 import unittest
+import unittest.mock
 from pathlib import Path
 
 ROOT = Path(__file__).parents[1]
 WORKFLOW = ROOT / ".github/workflows/python-ci.yml"
 STEPS = ROOT / ".github/actions/python-ci/steps.py"
+
+# Variables the workflow sets from its inputs. Inner runs must not inherit them from
+# the outer environment (this repository's own CI sets several for its test step).
+INPUT_VARIABLES = set(
+    re.findall(r"^\s+([A-Z_]+): \$\{\{ inputs\.", WORKFLOW.read_text(), re.MULTILINE)
+) | {
+    "PYTHONWARNINGS",
+    "PYTHONHASHSEED",
+}
+
+
+def clean_environment(**overrides):
+    """Return the outer environment without workflow inputs, plus overrides."""
+    base = {
+        name: value for name, value in os.environ.items() if name not in INPUT_VARIABLES
+    }
+    return {**base, **overrides}
 
 
 def script(name):
@@ -29,6 +47,43 @@ def script(name):
 
 
 class StepHarness:
+    def run_step(self, root, step, env=None, executable=sys.executable, cwd=None):
+        """Run a step script with its own RUNNER_TEMP and system temp directory.
+
+        Steps must leave nothing in the system temp directory, which persistent
+        self-hosted runners never clean; scratch files belong under RUNNER_TEMP.
+        """
+        runner_temp = tempfile.mkdtemp(prefix="runner-temp-")
+        system_temp = tempfile.mkdtemp(prefix="system-temp-")
+        for path in (runner_temp, system_temp):
+            self.addCleanup(shutil.rmtree, path, ignore_errors=True)
+        process_env = clean_environment(
+            GITHUB_WORKSPACE=str(root),
+            GITHUB_STEP_SUMMARY=os.devnull,
+            GITHUB_OUTPUT=os.devnull,
+            RUNNER_TEMP=runner_temp,
+            TMPDIR=system_temp,
+            TEMP=system_temp,
+            TMP=system_temp,
+        )
+        process_env.update(env or {})
+        result = subprocess.run(
+            [executable, str(STEPS), script(step)],
+            check=False,
+            cwd=cwd or root,
+            env=process_env,
+            text=True,
+            capture_output=True,
+        )
+        # pytest keeps its tmp_path base directories there and prunes old ones itself.
+        leaked = sorted(
+            p.name
+            for p in Path(system_temp).iterdir()
+            if not p.name.startswith("pytest-of-")
+        )
+        self.assertEqual(leaked, [], f"{step} left files in the system temp directory")
+        return result
+
     def execute(
         self,
         files,
@@ -43,18 +98,8 @@ class StepHarness:
                 path = root / name
                 path.parent.mkdir(parents=True, exist_ok=True)
                 path.write_text(content)
-            process_env = os.environ.copy()
-            process_env["GITHUB_WORKSPACE"] = str(root)
-            process_env["GITHUB_STEP_SUMMARY"] = os.devnull
-            process_env["GITHUB_OUTPUT"] = os.devnull
-            process_env.update(env or {})
-            return subprocess.run(
-                [executable, str(STEPS), script(step)],
-                check=False,
-                cwd=root / working_directory,
-                env=process_env,
-                text=True,
-                capture_output=True,
+            return self.run_step(
+                root, step, env, executable, cwd=root / working_directory
             )
 
 
@@ -610,25 +655,7 @@ class WorkflowTests(StepHarness, unittest.TestCase):
                 path = root / name
                 path.parent.mkdir(parents=True, exist_ok=True)
                 path.write_text(content)
-            process_env = {
-                **os.environ,
-                "GITHUB_WORKSPACE": str(root),
-                "GITHUB_STEP_SUMMARY": os.devnull,
-                "GITHUB_OUTPUT": os.devnull,
-                **env,
-            }
-            result = subprocess.run(
-                [
-                    sys.executable,
-                    str(STEPS),
-                    script("Run tests and reject empty test suites"),
-                ],
-                check=False,
-                cwd=root,
-                env=process_env,
-                text=True,
-                capture_output=True,
-            )
+            result = self.run_step(root, "Run tests and reject empty test suites", env)
             self.leftover = sorted(p.name for p in root.glob(".coverage.*"))
             return result
 
@@ -1363,3 +1390,40 @@ class RecordingResultTests(unittest.TestCase):
         first = self.run_suite(steps, Case("test_ok"))
         second = self.run_suite(steps, Case("test_ok"))
         self.assertEqual((len(first.records), len(second.records)), (1, 1))
+
+
+class HarnessIsolationTests(StepHarness, unittest.TestCase):
+    def test_input_variables_come_from_the_workflow(self):
+        for name in (
+            "TEST_DIRECTORY",
+            "COVERAGE_VERSION",
+            "JUNIT_FILE",
+            "TEST_RUNNER",
+            "PYTEST_ARGS",
+        ):
+            self.assertIn(name, INPUT_VARIABLES)
+        self.assertNotIn("PATH", INPUT_VARIABLES)
+
+    def test_outer_input_variables_do_not_reach_inner_runs(self):
+        files = {
+            "tests/test_ok.py": "import unittest\n\n\nclass T(unittest.TestCase):\n    def test_ok(self):\n        pass\n"
+        }
+        leaked = {
+            "TEST_RUNNER": "pytest",
+            "PYTEST_VERSION": "9.1.1",
+            "TEST_PATTERN": "nothing_*.py",
+            "COVERAGE_VERSION": "9.9",
+        }
+        with unittest.mock.patch.dict(os.environ, leaked):
+            result = self.execute(files)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("Ran 1 test", result.stderr)
+
+    def test_a_missing_runner_temp_directory_is_created(self):
+        steps = load_steps()
+        with tempfile.TemporaryDirectory() as parent:
+            missing = os.path.join(parent, "runner", "temp")
+            with unittest.mock.patch.dict(os.environ, {"RUNNER_TEMP": missing}):
+                scratch = steps.scratch_dir("x-")
+            self.assertEqual(os.path.dirname(scratch), missing)
+            self.assertTrue(os.path.isdir(scratch))

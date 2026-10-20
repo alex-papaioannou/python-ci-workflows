@@ -73,7 +73,7 @@ jobs:
           # like a missing tag.
           tag_commit() {
             local object err
-            err=$(mktemp)
+            err="$RUNNER_TEMP/gh-api-error"
             if ! object=$(gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/$1" --jq '.object.type + " " + .object.sha' 2> "$err"); then
               if grep -q "HTTP 404" "$err"; then return 2; fi
               cat "$err" >&2
