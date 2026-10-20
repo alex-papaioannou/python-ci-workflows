@@ -31,6 +31,14 @@ major tag such as `v1`, an exact release, or a commit SHA.
 - "No tests discovered" now names `test-directory` and `test-pattern` and their
   values.
 
+- With unittest, failing and erroring subtests are now counted in the job summary
+  and written to the JUnit report; they used to be missing from both.
+- `setUpClass` and `setUpModule` errors are reported in JUnit under the class or
+  module that failed, with a zero duration.
+- JUnit reports stay valid XML when failure messages contain control characters,
+  such as ANSI colour codes, and test IDs containing `|` no longer break the
+  summary tables.
+
 ### Behaviour changes
 
 - Artifact names for calls with a `working-directory` other than `.`, or with a

@@ -20,7 +20,7 @@ import time
 import unittest
 import xml.etree.ElementTree as ET
 from pathlib import Path
-from typing import ClassVar
+from typing import NamedTuple
 
 VERSION = re.compile(r"|\d+(\.\d+){0,2}")
 
@@ -522,18 +522,59 @@ def install_test_tools() -> int:
     return pip_install("-q", *tools) if tools else 0
 
 
+class Record(NamedTuple):
+    test_id: str
+    outcome: str  # passed, failure, error or skipped
+    detail: str
+    elapsed: float
+    classname: str
+    name: str
+
+
+FIXTURE = re.compile(r"(\w+) \((.+)\)")
+# Private, but stable since Python 3.4.
+SUBTEST = unittest.case._SubTest  # type: ignore[attr-defined]
+
+
+def junit_name(test) -> tuple[str, str]:
+    """Return the JUnit (classname, name) for a test, subtest or fixture error."""
+    if isinstance(test, SUBTEST):
+        parent = test.test_case.id()
+        classname, _, method = parent.rpartition(".")
+        return classname, method + test.id()[len(parent) :]
+    match = FIXTURE.fullmatch(test.id())
+    if match and "." not in match.group(1):
+        # setUpClass, setUpModule and their teardowns: "setUpClass (pkg.mod.Class)".
+        return match.group(2), match.group(1)
+    classname, _, name = test.id().rpartition(".")
+    return classname, name
+
+
 class RecordingResult(unittest.TextTestResult):
     """Text result that also records each test's outcome and duration."""
 
-    records: ClassVar[list[tuple[unittest.TestCase, str, str, float]]] = []
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.records: list[Record] = []
+        self._current = None
+        self._started = 0.0
 
     def startTest(self, test):
+        self._current = test
         self._started = time.perf_counter()
         super().startTest(test)
 
+    def stopTest(self, test):
+        super().stopTest(test)
+        self._current = None  # do not keep finished tests alive
+
     def _record(self, test, outcome, detail=""):
-        elapsed = time.perf_counter() - getattr(self, "_started", time.perf_counter())
-        self.records.append((test, outcome, detail, elapsed))
+        owner = test.test_case if isinstance(test, SUBTEST) else test
+        # Fixture errors such as setUpClass never pass through startTest.
+        elapsed = time.perf_counter() - self._started if owner is self._current else 0.0
+        self.records.append(
+            Record(test.id(), outcome, str(detail), elapsed, *junit_name(test))
+        )
 
     def addSuccess(self, test):
         super().addSuccess(test)
@@ -546,6 +587,15 @@ class RecordingResult(unittest.TextTestResult):
     def addError(self, test, err):
         super().addError(test, err)
         self._record(test, "error", self.errors[-1][1])
+
+    def addSubTest(self, test, subtest, err):
+        super().addSubTest(test, subtest, err)
+        # Only failing subtests are reported; unittest then never reports the parent.
+        if err is not None:
+            if issubclass(err[0], test.failureException):
+                self._record(subtest, "failure", self.failures[-1][1])
+            else:
+                self._record(subtest, "error", self.errors[-1][1])
 
     def addSkip(self, test, reason):
         super().addSkip(test, reason)
@@ -567,6 +617,11 @@ def count(outcomes: list[str]) -> dict[str, int]:
 
 
 SLOWEST = 10
+
+
+def table_cell(text: str) -> str:
+    """Escape text for a Markdown table cell; GitHub splits cells on '|' even in code."""
+    return text.replace("|", "\\|").replace("\n", " ")
 
 
 def build_flavour() -> str:
@@ -606,12 +661,21 @@ def write_summary(
                 "| Test | Seconds |\n| --- | ---: |\n"
             )
             summary.writelines(
-                f"| `{test_id}` | {secs:.2f} |\n" for test_id, secs in slowest
+                f"| `{table_cell(test_id)}` | {secs:.2f} |\n"
+                for test_id, secs in slowest
             )
             summary.write("\n</details>\n\n")
 
 
-def write_junit(path, records, counts) -> None:
+# XML 1.0 forbids most C0 control characters and lone surrogates.
+INVALID_XML = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\ud800-\udfff]")
+
+
+def xml_text(text: str) -> str:
+    return INVALID_XML.sub("\ufffd", text)
+
+
+def write_junit(path: str, records: list[Record], counts: dict[str, int]) -> None:
     suite = ET.Element(
         "testsuite",
         name="unittest",
@@ -619,17 +683,20 @@ def write_junit(path, records, counts) -> None:
         failures=str(counts["failure"]),
         errors=str(counts["error"]),
         skipped=str(counts["skipped"]),
-        time=f"{sum(r[3] for r in records):.3f}",
+        time=f"{sum(r.elapsed for r in records):.3f}",
     )
-    for test, outcome, detail, elapsed in records:
-        classname, _, name = test.id().rpartition(".")
+    for record in records:
         case = ET.SubElement(
-            suite, "testcase", classname=classname, name=name, time=f"{elapsed:.3f}"
+            suite,
+            "testcase",
+            classname=xml_text(record.classname),
+            name=xml_text(record.name),
+            time=f"{record.elapsed:.3f}",
         )
-        if outcome != "passed":
-            text = str(detail)
-            message = text.strip().splitlines()[-1] if text.strip() else outcome
-            ET.SubElement(case, outcome, message=message).text = text
+        if record.outcome != "passed":
+            text = xml_text(record.detail)
+            message = text.strip().splitlines()[-1] if text.strip() else record.outcome
+            ET.SubElement(case, record.outcome, message=message).text = text
     os.makedirs(os.path.dirname(os.path.abspath(path)), exist_ok=True)
     ET.ElementTree(suite).write(path, encoding="utf-8", xml_declaration=True)
 
@@ -688,12 +755,13 @@ def run_unittest() -> int:
         resultclass=RecordingResult,  # type: ignore[arg-type]
     )
     result = runner.run(suite)
-    records = RecordingResult.records
-    counts = count([r[1] for r in records])
+    assert isinstance(result, RecordingResult)
+    records = result.records
+    counts = count([r.outcome for r in records])
     write_summary(
         counts,
-        [(r[1], r[0].id()) for r in records if r[1] in ("failure", "error")],
-        [(r[0].id(), r[3]) for r in records],
+        [(r.outcome, r.test_id) for r in records if r.outcome in ("failure", "error")],
+        [(r.test_id, r.elapsed) for r in records],
     )
     if env("JUNIT_FILE"):
         write_junit(env("JUNIT_FILE"), records, counts)
