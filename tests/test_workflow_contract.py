@@ -455,6 +455,166 @@ class WorkflowTests(StepHarness, unittest.TestCase):
                 if not ok:
                     self.assertIn("call-name", result.stderr)
 
+    COVERED_LIB = "def a():\n    return 1\n\n\ndef b():\n    return 2\n"
+    CLI = "import lib\n\nprint(lib.b())\n"
+
+    @unittest.skipUnless(
+        importlib.util.find_spec("coverage"), "coverage is not installed"
+    )
+    def test_coverage_includes_subprocesses_with_unittest(self):
+        tests = (
+            "import subprocess, sys, unittest\n\nfrom lib import a\n\n\nclass T(unittest.TestCase):\n"
+            "    def test_a(self):\n        self.assertEqual(a(), 1)\n\n"
+            "    def test_cli(self):\n        out = subprocess.run([sys.executable, 'cli.py'], capture_output=True, text=True, check=True)\n"
+            "        self.assertEqual(out.stdout.strip(), '2')\n"
+        )
+        files = {
+            "lib.py": self.COVERED_LIB,
+            "cli.py": self.CLI,
+            "tests/test_lib.py": tests,
+        }
+        result = self.execute_keep(
+            files, {"COVERAGE_VERSION": "7.16.2", "COVERAGE_FAIL_UNDER": "100"}
+        )
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertRegex(result.stdout, r"cli\.py +2 +0 +100%")
+        self.assertEqual(self.leftover, [])
+
+    @unittest.skipUnless(
+        importlib.util.find_spec("coverage"), "coverage is not installed"
+    )
+    def test_coverage_ignores_stale_fragments_and_leaves_none_on_failure(self):
+        tests = "import unittest\n\nfrom lib import a\n\n\nclass T(unittest.TestCase):\n    def test_a(self):\n        self.assertEqual(a(), 1)\n"
+        files = {
+            "lib.py": self.COVERED_LIB,
+            "tests/test_lib.py": tests,
+            ".coverage.stale.1.x": "not coverage data",
+        }
+        result = self.execute_keep(
+            files, {"COVERAGE_VERSION": "7.16.2", "COVERAGE_FAIL_UNDER": "100"}
+        )
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("below the required 100%", result.stderr)
+        self.assertRegex(result.stdout, r"lib\.py +4 +1 +75%")
+        self.assertEqual(self.leftover, [".coverage.stale.1.x"])
+
+    @unittest.skipUnless(
+        importlib.util.find_spec("coverage"), "coverage is not installed"
+    )
+    def test_subprocesses_stay_quiet_with_a_project_include(self):
+        tests = (
+            "import subprocess, sys, unittest\n\n\nclass T(unittest.TestCase):\n"
+            "    def test_cli(self):\n        out = subprocess.run([sys.executable, 'cli.py'], capture_output=True, text=True, check=True)\n"
+            "        self.assertEqual(out.stderr, '')\n"
+        )
+        files = {
+            "lib.py": self.COVERED_LIB,
+            "cli.py": self.CLI,
+            "pyproject.toml": '[tool.coverage.run]\ninclude = ["lib.py", "cli.py"]\n',
+            "tests/test_cli.py": tests,
+        }
+        result = self.execute_keep(files, {"COVERAGE_VERSION": "7.16.2"})
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
+    @unittest.skipUnless(
+        importlib.util.find_spec("coverage"), "coverage is not installed"
+    )
+    def test_coverage_warns_when_nothing_was_measured(self):
+        files = {
+            "pyproject.toml": '[tool.coverage.run]\nomit = ["*"]\n',
+            "tests/test_ok.py": "import unittest\n\n\nclass T(unittest.TestCase):\n    def test_ok(self):\n        pass\n",
+        }
+        result = self.execute_keep(files, {"COVERAGE_VERSION": "7.16.2"})
+        self.assertIn("::warning::Coverage measured no files", result.stdout)
+
+    @unittest.skipUnless(
+        importlib.util.find_spec("coverage"), "coverage is not installed"
+    )
+    def test_coverage_honours_project_omit_settings(self):
+        tests = "import unittest\n\nfrom lib import a\n\n\nclass T(unittest.TestCase):\n    def test_a(self):\n        self.assertEqual(a(), 1)\n"
+        files = {
+            "lib.py": self.COVERED_LIB,
+            "unused.py": "def never():\n    return 3\n",
+            "pyproject.toml": '[tool.coverage.run]\nomit = ["unused.py"]\nbranch = true\n',
+            "tests/test_lib.py": tests,
+        }
+        result = self.execute_keep(files, {"COVERAGE_VERSION": "7.16.2"})
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertNotIn("unused.py", result.stdout)
+        self.assertIn("Branch", result.stdout)
+
+    @unittest.skipUnless(
+        importlib.util.find_spec("coverage"), "coverage is not installed"
+    )
+    def test_coverage_with_a_pyproject_that_has_no_coverage_section(self):
+        tests = "import unittest\n\nfrom lib import a\n\n\nclass T(unittest.TestCase):\n    def test_a(self):\n        self.assertEqual(a(), 1)\n"
+        files = {
+            "lib.py": self.COVERED_LIB,
+            "pyproject.toml": '[project]\nname = "x"\nversion = "1"\n\n[tool.pytest.ini_options]\nxfail_strict = true\n',
+            "tests/test_lib.py": tests,
+        }
+        result = self.execute_keep(files, {"COVERAGE_VERSION": "7.16.2"})
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertRegex(result.stdout, r"lib\.py +4 +1 +75%")
+
+    @unittest.skipUnless(
+        importlib.util.find_spec("coverage") and importlib.util.find_spec("xdist"),
+        "needs coverage and pytest-xdist",
+    )
+    def test_coverage_measures_pytest_xdist_workers(self):
+        tests = (
+            "import subprocess, sys\n\nfrom lib import a\n\n\ndef test_a():\n    assert a() == 1\n\n\n"
+            "def test_cli():\n    out = subprocess.run([sys.executable, 'cli.py'], capture_output=True, text=True, check=True)\n"
+            "    assert out.stdout.strip() == '2'\n"
+        )
+        files = {
+            "lib.py": self.COVERED_LIB,
+            "cli.py": self.CLI,
+            "tests/test_lib.py": tests,
+        }
+        env = {
+            **PYTEST,
+            "PYTEST_ARGS": "-n 2",
+            "COVERAGE_VERSION": "7.16.2",
+            "COVERAGE_FAIL_UNDER": "100",
+        }
+        for warnings in ("default", "error"):
+            with self.subTest(warnings=warnings):
+                result = self.execute_keep(files, {**env, "PYTHONWARNINGS": warnings})
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                self.assertRegex(result.stdout, r"TOTAL +\d+ +0 +100%")
+                self.assertEqual(self.leftover, [])
+
+    def execute_keep(self, files, env):
+        """Run the test step and record coverage fragment files left in the project."""
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            for name, content in files.items():
+                path = root / name
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_text(content)
+            process_env = {
+                **os.environ,
+                "GITHUB_WORKSPACE": str(root),
+                "GITHUB_STEP_SUMMARY": os.devnull,
+                "GITHUB_OUTPUT": os.devnull,
+                **env,
+            }
+            result = subprocess.run(
+                [
+                    sys.executable,
+                    str(STEPS),
+                    script("Run tests and reject empty test suites"),
+                ],
+                check=False,
+                cwd=root,
+                env=process_env,
+                text=True,
+                capture_output=True,
+            )
+            self.leftover = sorted(p.name for p in root.glob(".coverage.*"))
+            return result
+
     def test_junit_report_and_step_summary(self):
         import xml.etree.ElementTree as ET
 

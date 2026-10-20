@@ -820,18 +820,22 @@ def run_pytest() -> int:
 def test() -> int:
     # Import the project under test, not this script's directory.
     sys.path[0] = os.getcwd()
-    cov = None
-    if env("COVERAGE_VERSION"):
-        import coverage  # type: ignore[import-not-found,unused-ignore]
-
-        cov = coverage.Coverage(data_file=".coverage", source=[os.getcwd()])
-        cov.start()
+    cov = start_coverage() if env("COVERAGE_VERSION") else None
     code = (
         run_pytest() if env("TEST_RUNNER", "unittest") == "pytest" else run_unittest()
     )
     if cov is not None:
         cov.stop()
         cov.save()
+        if cov.get_option("run:parallel"):
+            # Merge the data written by subprocesses and pytest-xdist workers.
+            cov.combine()
+            cov.save()
+        if not cov.get_data().measured_files():
+            print(
+                "::warning::Coverage measured no files. Check that the tests import the "
+                "project and that the coverage omit and include settings match it."
+            )
         total = cov.report(skip_empty=True, show_missing=True)
         cov.xml_report(outfile="coverage.xml")
         if env("GITHUB_STEP_SUMMARY"):
@@ -854,6 +858,52 @@ def test() -> int:
             )
             return 1
     return code
+
+
+def start_coverage():
+    """Start coverage.py so that subprocesses and pytest-xdist workers are measured.
+
+    The project's own coverage configuration (omit, branch, exclude_lines and so on)
+    is kept; the workflow adds subprocess measurement and parallel data files on top.
+    """
+    import atexit
+    import shutil
+
+    import coverage  # type: ignore[import-not-found,unused-ignore]
+
+    # A fresh data directory: children write their fragments there, so nothing lands
+    # in the project and stale fragments from earlier runs are never combined.
+    data_dir = tempfile.mkdtemp(prefix="coverage-data-")
+    atexit.register(shutil.rmtree, data_dir, True)
+    data_file = os.path.join(data_dir, ".coverage")
+    if coverage.version_info < (7, 10, 3):
+        print(
+            "::notice::coverage.py 7.10.3 or later also measures subprocesses and "
+            "pytest-xdist workers"
+        )
+        cov = coverage.Coverage(data_file=data_file, source=[os.getcwd()])
+    else:
+        cov = coverage.Coverage(data_file=data_file, config_file=True)
+        if cov.config.config_file is None:
+            # Subprocess patching needs a configuration file to hand to the children.
+            rc = os.path.join(data_dir, "coveragerc")
+            Path(rc).write_text("[run]\n", encoding="utf-8")
+            cov = coverage.Coverage(data_file=data_file, config_file=rc)
+        cov.set_option("run:source", [os.getcwd()])
+        cov.set_option("run:patch", [*cov.get_option("run:patch"), "subprocess"])
+        cov.set_option("run:parallel", True)
+        # The xdist controller collects nothing itself, and a project "include" is
+        # overridden by the source above; neither should print in every subprocess.
+        cov.set_option(
+            "run:disable_warnings",
+            [
+                *cov.get_option("run:disable_warnings"),
+                "no-data-collected",
+                "include-ignored",
+            ],
+        )
+    cov.start()
+    return cov
 
 
 def report_result() -> int:

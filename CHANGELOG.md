@@ -30,7 +30,6 @@ major tag such as `v1`, an exact release, or a commit SHA.
   runners used to skip Ruff, pip-audit and the build without a warning.
 - "No tests discovered" now names `test-directory` and `test-pattern` and their
   values.
-
 - With unittest, failing and erroring subtests are now counted in the job summary
   and written to the JUnit report; they used to be missing from both.
 - `setUpClass` and `setUpModule` errors are reported in JUnit under the class or
@@ -38,6 +37,9 @@ major tag such as `v1`, an exact release, or a commit SHA.
 - JUnit reports stay valid XML when failure messages contain control characters,
   such as ANSI colour codes, and test IDs containing `|` no longer break the
   summary tables.
+- Coverage now includes code run in subprocesses and pytest-xdist workers
+  (coverage.py 7.10.3 or later). Under `pytest -n` it used to report 0%, failing
+  any threshold and crashing with `warnings-as-errors`.
 
 ### Behaviour changes
 
