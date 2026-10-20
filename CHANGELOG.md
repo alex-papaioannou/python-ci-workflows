@@ -70,6 +70,11 @@ major tag such as `v1`, an exact release, or a commit SHA.
   the runner cleans after each job, instead of accumulating in the system temp
   directory of persistent self-hosted runners.
 
+- `test-wheel` installs the same locked, hash-checked dependencies as the main
+  environment (from a requirements file, `uv.lock` or `pylock.toml`), then the wheel
+  with `--no-deps`, and runs `pip check`. It used to resolve the wheel's dependencies
+  afresh, so it could test against versions the lock does not allow.
+
 ### Behaviour changes
 
 - With unittest, a malformed doctest under `doctest-paths` now fails the run as a

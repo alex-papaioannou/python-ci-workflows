@@ -415,6 +415,30 @@ def is_pylock(path: str) -> bool:
     return re.fullmatch(r"pylock(\.[^.]+)?\.toml", Path(path).name) is not None
 
 
+def export_uv_lock(lock: str) -> str:
+    """Export a uv.lock, with project-extras, to a hashed requirements file."""
+    exported = os.path.join(scratch_dir("uv-export-"), "requirements.txt")
+    extra_args = [arg for name in extras() for arg in ("--extra", name)]
+    if python(
+        "-m",
+        "uv",
+        "export",
+        "--frozen",
+        "--format",
+        "requirements-txt",
+        "--no-emit-project",
+        *extra_args,
+        "--directory",
+        str(Path(lock).parent),
+        "-o",
+        exported,
+    ):
+        raise SystemExit(
+            "Could not export uv.lock; is it up to date with pyproject.toml?"
+        )
+    return exported
+
+
 def install() -> int:
     use_uv = env("INSTALLER", "pip") == "uv"
     if use_uv:
@@ -430,26 +454,7 @@ def install() -> int:
     requirements = env("REQUIREMENTS_FILE")
     if requirements:
         if is_uv_lock(requirements):
-            exported = os.path.join(scratch_dir("uv-export-"), "requirements.txt")
-            extra_args = [arg for name in extras() for arg in ("--extra", name)]
-            if python(
-                "-m",
-                "uv",
-                "export",
-                "--frozen",
-                "--format",
-                "requirements-txt",
-                "--no-emit-project",
-                *extra_args,
-                "--directory",
-                str(Path(requirements).parent),
-                "-o",
-                exported,
-            ):
-                raise SystemExit(
-                    "Could not export uv.lock; is it up to date with pyproject.toml?"
-                )
-            requirements = exported
+            requirements = export_uv_lock(requirements)
         command = ["-r", requirements]
         hashed = flag("REQUIRE_HASHES", default=True) and not is_pylock(requirements)
         if hashed:
@@ -633,16 +638,58 @@ def test_wheel(outdir: str) -> int:
     def venv_install(*args: str) -> int:
         return venv_run("-m", "pip", "install", "--disable-pip-version-check", *args)
 
+    # Install the same locked, hash-checked dependency set as the main environment,
+    # then add the wheel itself without letting pip resolve anything else.
     requirements = env("REQUIREMENTS_FILE")
-    if requirements and Path(requirements).suffix == ".txt":
-        hashes = ["--require-hashes"] if flag("REQUIRE_HASHES", default=True) else []
-        if venv_install(*hashes, "-r", requirements):
-            return 1
-    target = wheels[0] + (f"[{','.join(extras())}]" if extras() else "")
-    if venv_install(target):
-        raise SystemExit("Could not install the built wheel")
+    if requirements:
+        if is_pylock(requirements):
+            locked = python(
+                "-m",
+                "uv",
+                "pip",
+                "install",
+                "--python",
+                interpreter,
+                "-r",
+                requirements,
+            )
+        else:
+            source = (
+                export_uv_lock(requirements)
+                if is_uv_lock(requirements)
+                else requirements
+            )
+            hashed = is_uv_lock(requirements) or flag("REQUIRE_HASHES", default=True)
+            locked = venv_install(
+                *(["--require-hashes"] if hashed else []), "-r", source
+            )
+        if locked:
+            raise SystemExit(
+                "Could not install requirements-file into the wheel-test environment"
+            )
+        if venv_install("--no-deps", wheels[0]):
+            raise SystemExit("Could not install the built wheel")
+        if venv_run("-m", "pip", "check"):
+            raise SystemExit(
+                "The wheel's dependencies are not satisfied by requirements-file; "
+                "add them to the lock"
+            )
+    else:
+        target = wheels[0] + (f"[{','.join(extras())}]" if extras() else "")
+        if venv_install(target):
+            raise SystemExit("Could not install the built wheel")
     pytest_runner = env("TEST_RUNNER", "unittest") == "pytest"
-    if pytest_runner and venv_install("-q", "pytest==" + env("PYTEST_VERSION")):
+    has_pytest = (
+        subprocess.run(
+            [interpreter, "-c", "import pytest"], check=False, capture_output=True
+        ).returncode
+        == 0
+    )
+    if (
+        pytest_runner
+        and not has_pytest
+        and venv_install("-q", "pytest==" + env("PYTEST_VERSION"))
+    ):
         raise SystemExit("Could not install pytest for the wheel tests")
     # Copy only the tests and the pytest configuration, so imports resolve to the
     # installed wheel rather than the source tree.

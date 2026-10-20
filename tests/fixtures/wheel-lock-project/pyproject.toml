@@ -1,0 +1,11 @@
+[build-system]
+requires = ["flit_core>=3.9,<4"]
+build-backend = "flit_core.buildapi"
+
+[project]
+name = "lockedpkg"
+version = "1.0"
+description = "Fixture whose dependency is locked below its newest release."
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = ["iniconfig>=2.0"]

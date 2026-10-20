@@ -1314,6 +1314,63 @@ class WheelTests(StepHarness, unittest.TestCase):
                 self.assertNotEqual(result.returncode, 0)
                 self.assertIn(f"{label} requires build-package: true", result.stderr)
 
+    def venv_with(self, *packages):
+        venv = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, venv, ignore_errors=True)
+        subprocess.run([sys.executable, "-m", "venv", venv], check=True)
+        python = Path(venv) / (
+            "Scripts/python.exe" if os.name == "nt" else "bin/python"
+        )
+        if packages:
+            subprocess.run(
+                [str(python), "-m", "pip", "install", "-q", *packages], check=True
+            )
+        return str(python)
+
+    def test_wheel_tests_use_the_locked_dependency_versions(self):
+        fixture = Path(__file__).parent / "fixtures/wheel-lock-project"
+        files = {
+            name: (fixture / name).read_text() for name in ("pyproject.toml", "uv.lock")
+        }
+        files.update(
+            {
+                "README.md": "Fixture\n",
+                "lockedpkg/__init__.py": "import iniconfig\n",
+                "tests/test_locked.py": (
+                    "import importlib.metadata\nimport unittest\n\nimport lockedpkg\n\n\n"
+                    "class T(unittest.TestCase):\n    def test_lock(self):\n"
+                    "        self.assertEqual(importlib.metadata.version('iniconfig'), '2.1.0')\n"
+                ),
+            }
+        )
+        env = {"REQUIREMENTS_FILE": "uv.lock", "INSTALLER": "uv", "TEST_WHEEL": "true"}
+        result = self.execute(
+            files,
+            env,
+            step="Build and check package",
+            executable=self.venv_with("uv==0.13.4"),
+        )
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn("Testing lockedpkg-1.0", result.stdout)
+
+    def test_wheel_tests_fail_when_the_lock_misses_a_dependency(self):
+        files = self.files("VALUE = 1\n")
+        files["pyproject.toml"] = files["pyproject.toml"].replace(
+            'readme = "README.md"\n',
+            'readme = "README.md"\ndependencies = ["iniconfig"]\n',
+        )
+        files["requirements.txt"] = "# nothing locked\n"
+        env = {"REQUIREMENTS_FILE": "requirements.txt", "TEST_WHEEL": "true"}
+        result = self.execute(files, env, step="Build and check package")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("not satisfied by requirements-file", result.stderr)
+
+    def test_wheel_requires_build(self):
+        result = self.execute(
+            {"tests/test_ok.py": ""}, {"TEST_WHEEL": "true"}, step="Validate inputs"
+        )
+        self.assertNotEqual(result.returncode, 0)
+
 
 class DoctestAndTimingTests(StepHarness, unittest.TestCase):
     MODULE = (
