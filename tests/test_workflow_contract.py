@@ -487,6 +487,76 @@ class WorkflowTests(StepHarness, unittest.TestCase):
             self.assertIn("| 1 | 1 | 0 | 1 |", text)
             self.assertIn("test_mix.T.test_bad", text)
 
+    def run_with_reports(self, files):
+        import xml.etree.ElementTree as ET
+
+        with tempfile.TemporaryDirectory() as out:
+            summary = Path(out) / "summary.md"
+            report = Path(out) / "junit.xml"
+            result = self.execute(
+                files, {"JUNIT_FILE": str(report), "GITHUB_STEP_SUMMARY": str(summary)}
+            )
+            return (
+                result,
+                ET.parse(report).getroot(),
+                summary.read_text(encoding="utf-8"),
+            )
+
+    def test_failing_subtests_reach_the_summary_and_junit(self):
+        tests = (
+            "import unittest\n\n\nclass T(unittest.TestCase):\n"
+            "    def test_ok(self):\n        pass\n\n"
+            "    def test_values(self):\n        for v in (1, 2, 3):\n"
+            "            with self.subTest(v=v):\n                self.assertNotEqual(v, 2)\n\n"
+            "    def test_errors(self):\n        for v in (1, 2):\n"
+            "            with self.subTest(v=v):\n                if v == 2:\n                    raise KeyError(v)\n"
+        )
+        result, root, summary = self.run_with_reports({"tests/test_sub.py": tests})
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("FAILED (failures=1, errors=1)", result.stderr)
+        self.assertEqual((root.get("failures"), root.get("errors")), ("1", "1"))
+        names = {case.get("name") for case in root.iter("testcase")}
+        self.assertIn("test_values (v=2)", names)
+        self.assertIn("test_errors (v=2)", names)
+        self.assertIn("| 1 | 1 | 1 | 0 |", summary)
+        self.assertIn("test_sub.T.test_values (v=2)", summary)
+
+    def test_class_fixture_errors_are_named_after_the_class(self):
+        tests = (
+            "import time, unittest\n\n\nclass A(unittest.TestCase):\n"
+            "    def test_slow(self):\n        time.sleep(0.3)\n\n\n"
+            "class B(unittest.TestCase):\n    @classmethod\n    def setUpClass(cls):\n"
+            "        raise RuntimeError('fixture')\n\n    def test_never(self):\n        pass\n"
+        )
+        result, root, _ = self.run_with_reports({"tests/test_fix.py": tests})
+        self.assertNotEqual(result.returncode, 0)
+        error = next(c for c in root.iter("testcase") if c.find("error") is not None)
+        self.assertEqual(
+            (error.get("classname"), error.get("name")), ("test_fix.B", "setUpClass")
+        )
+        self.assertLess(float(error.get("time")), 0.1)
+        self.assertIn("fixture", error.find("error").text)
+
+    def test_control_characters_still_give_valid_junit(self):
+        tests = "import unittest\n\n\nclass T(unittest.TestCase):\n    def test_color(self):\n        self.fail('\\x1b[31mred\\x1b[0m \\x00 mismatch')\n"
+        result, root, _ = self.run_with_reports({"tests/test_ctl.py": tests})
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("mismatch", root.find("testcase/failure").text)
+
+    def test_pipes_in_test_ids_stay_in_one_table_cell(self):
+        tests = (
+            "import unittest\n\n\nclass T(unittest.TestCase):\n    def test_pipe(self):\n"
+            "        with self.subTest(case='a|b'):\n            self.fail('x')\n"
+        )
+        _, _, summary = self.run_with_reports({"tests/test_pipe.py": tests})
+        row = next(
+            line
+            for line in summary.splitlines()
+            if line.startswith("| `") and "test_pipe" in line
+        )
+        self.assertIn("a\\|b", row)
+        self.assertEqual(row.replace("\\|", "").count("|"), 3)
+
     def test_junit_path_must_stay_in_checkout(self):
         result = self.execute(
             {"tests/test_ok.py": ""},
@@ -927,3 +997,51 @@ class DoctestAndTimingTests(StepHarness, unittest.TestCase):
             text = summary.read_text(encoding="utf-8")
             self.assertIn("2 slowest tests", text)
             self.assertLess(text.index("test_slow"), text.index("test_fast"))
+
+
+def load_steps():
+    spec = importlib.util.spec_from_file_location("python_ci_steps", STEPS)
+    assert spec and spec.loader
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+class RecordingResultTests(unittest.TestCase):
+    def run_suite(self, steps, case):
+        import io
+
+        suite = unittest.TestSuite([case])
+        runner = unittest.TextTestRunner(
+            stream=io.StringIO(), resultclass=steps.RecordingResult
+        )
+        return runner.run(suite)
+
+    def test_records_hold_ids_so_tests_can_be_collected(self):
+        import gc
+        import weakref
+
+        steps = load_steps()
+
+        class Case(unittest.TestCase):
+            def test_ok(self):
+                pass
+
+        case = Case("test_ok")
+        ref = weakref.ref(case)
+        result = self.run_suite(steps, case)
+        del case
+        gc.collect()
+        self.assertIsNone(ref())
+        self.assertEqual(result.records[0].test_id.rsplit(".", 1)[1], "test_ok")
+
+    def test_each_run_keeps_its_own_records(self):
+        steps = load_steps()
+
+        class Case(unittest.TestCase):
+            def test_ok(self):
+                pass
+
+        first = self.run_suite(steps, Case("test_ok"))
+        second = self.run_suite(steps, Case("test_ok"))
+        self.assertEqual((len(first.records), len(second.records)), (1, 1))
