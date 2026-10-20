@@ -75,7 +75,7 @@ inside the checkout. JSON arrays are passed as strings.
 | `operating-systems` | string | `["ubuntu-latest"]` | JSON array of runners. Each entry is a label, an array of labels such as `["self-hosted", "linux"]`, or a runner-group object such as `{"group": "large"}`. Every step runs through Python, so Windows and macOS need no shell changes. |
 | `allow-prereleases` | boolean | `false` | Let `setup-python` install alpha, beta and release-candidate versions. |
 | `experimental-python-versions` | string | `[]` | JSON array of matrix versions whose failures do not fail the run. |
-| `max-parallel` | number | `3` | Maximum simultaneous matrix jobs. |
+| `max-parallel` | number | `256` | Maximum simultaneous matrix jobs. The default, GitHub's matrix maximum, runs every cell at once; set a lower number to throttle. |
 | `timeout-minutes` | number | `10` | Per-job timeout in minutes. GitHub-hosted runners stop jobs after 360 minutes regardless. |
 | `cancel-in-progress` | boolean | `false` | Cancel older in-flight jobs for the same workflow, ref and call when a new run starts. |
 | `call-name` | string | `""` | Name for this call when one caller workflow calls the workflow more than once with the same `working-directory`. Letters, digits, `.`, `_` and `-`. |
