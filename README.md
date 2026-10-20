@@ -105,7 +105,7 @@ inside the checkout. JSON arrays are passed as strings.
 | --- | --- | --- | --- |
 | `test-runner` | string | `unittest` | `unittest` or `pytest`. |
 | `pytest-version` | string | `9.1.1` | pytest version installed when `test-runner` is `pytest`. |
-| `pytest-args` | string | `""` | Extra pytest arguments, split like a shell command line, for example `-m "not slow" -n auto`. |
+| `pytest-args` | string | `""` | Extra pytest arguments, split like a shell command line, for example `-m "not slow" -n auto`; `-n` needs pytest-xdist in your `requirements-file`. |
 | `test-directory` | string | `tests` | Directory to discover tests in. Set it to `""` with the pytest runner to use your pytest `testpaths` instead; unittest treats `""` as `tests`. |
 | `test-pattern` | string | `test*.py` | Filename glob for test modules. With pytest it overrides your `python_files` setting, so the default skips `*_test.py` files; set it to `""` to use your pytest configuration and pytest's defaults (`test_*.py` and `*_test.py`). unittest treats `""` as `test*.py`. Discovering zero tests fails the job. |
 | `top-level-directory` | string | `""` | unittest import root for package-based layouts. Ignored by pytest, which reads `rootdir` from its own configuration. |
@@ -131,7 +131,7 @@ inside the checkout. JSON arrays are passed as strings.
 
 | Input | Type | Default | Description |
 | --- | --- | --- | --- |
-| `coverage-version` | string | `""` | Measure tests with this coverage.py version. The job summary shows the total and a collapsible per-file table with missing lines, and `coverage.xml` is uploaded as `coverage-<os>-<python>`. |
+| `coverage-version` | string | `""` | Measure tests with this coverage.py version. The job summary shows the total and a collapsible per-file table with missing lines, and `coverage.xml` is uploaded as `coverage-<os>-<python>`. Code run in subprocesses and pytest-xdist workers is measured too (coverage.py 7.10.3 or later), and the project's own coverage settings such as `omit` and `branch` apply. |
 | `coverage-fail-under` | number | `0` | Fail when total coverage is below this percentage. |
 | `test-wheel` | boolean | `false` | After building, install the wheel (with `project-extras` and a `.txt` `requirements-file`) in a fresh virtual environment and run only a copy of the tests against it. This catches files missing from the wheel and broken package discovery. Requires `build-package`. |
 | `build-package` | boolean | `false` | Build an sdist and wheel and run `twine check --strict`, once per run on the primary cell. Requires `pyproject.toml`. Nothing is published. |
