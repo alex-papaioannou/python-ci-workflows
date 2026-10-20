@@ -41,19 +41,19 @@ major tag such as `v1`, an exact release, or a commit SHA.
 - Coverage now includes code run in subprocesses and pytest-xdist workers
   (coverage.py 7.10.3 or later). Under `pytest -n` it used to report 0%, failing
   any threshold and crashing with `warnings-as-errors`.
-
-- A malformed doctest under `doctest-paths` now fails the run with unittest; it
-  used to be skipped silently.
-- `doctest-paths` file entries that cannot run (outside `working-directory`, not
-  `.py`, or not importable because a directory or file name is not a valid module
-  name) are rejected by validation instead of being skipped or crashing the test
-  step. Directory entries still skip such files, now with a warning that lists them.
+- `doctest-paths` entries outside `working-directory` or naming a file other than
+  `.py` are rejected by validation instead of being skipped or crashing the test
+  step. With unittest, directory entries warn about the files they skip because
+  their paths are not module names, such as files under `.github` or a hyphenated
+  directory.
 
 ### Behaviour changes
 
-- A `doctest-paths` file entry that is not importable, such as one under a
-  hyphenated directory, now fails validation; it used to be skipped silently.
-
+- With unittest, a malformed doctest under `doctest-paths` now fails the run as a
+  test error naming the file; it used to be skipped silently.
+- With unittest, a `doctest-paths` file entry whose path is not a module name, such
+  as one under a hyphenated directory, now fails validation; it used to be skipped
+  silently. The pytest runner accepts such files.
 - Artifact names for calls with a `working-directory` other than `.`, or with a
   `call-name`, end in `-<call-name>` or `-<working-directory>`. Single calls from
   the repository root keep their names.

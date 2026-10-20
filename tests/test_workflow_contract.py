@@ -1147,21 +1147,35 @@ class DoctestAndTimingTests(StepHarness, unittest.TestCase):
         )
         self.assertNotEqual(result.returncode, 0)
 
-    def test_malformed_doctest_fails_and_names_the_module(self):
+    def test_malformed_doctest_is_an_error_naming_the_file(self):
+        import xml.etree.ElementTree as ET
+
         files = {
-            "tools.py": 'def f():\n    """\n    >>>f()\n    """\n',
-            "tests/test_none.py": "",
+            "pkg/__init__.py": "",
+            "pkg/tools.py": 'def f():\n    """\n    >>>f()\n    """\n',
+            "tests/test_ok.py": "import unittest\n\n\nclass T(unittest.TestCase):\n    def test_ok(self):\n        pass\n",
         }
-        result = self.execute(files, {"DOCTEST_PATHS": '["tools.py"]'})
-        self.assertNotEqual(result.returncode, 0)
-        self.assertIn("Malformed doctest in module tools", result.stderr)
+        with tempfile.TemporaryDirectory() as out:
+            junit = Path(out) / "junit.xml"
+            result = self.execute(
+                files, {"DOCTEST_PATHS": '["pkg"]', "JUNIT_FILE": str(junit)}
+            )
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("Malformed doctest in pkg/tools.py", result.stderr)
+            root = ET.parse(junit).getroot()
+            self.assertEqual(root.get("tests"), "2")
+            self.assertEqual(root.get("errors"), "1")
+            case = next(c for c in root.iter("testcase") if c.find("error") is not None)
+            self.assertEqual(
+                (case.get("classname"), case.get("name")), ("pkg.tools", "doctests")
+            )
 
     def test_doctest_paths_that_cannot_run_are_rejected_by_name(self):
         cases = (
             (
                 {"my-scripts/tool.py": ""},
                 '["my-scripts/tool.py"]',
-                "is not importable as a module",
+                "has no module name for unittest to import",
             ),
             ({"notes.txt": ""}, '["notes.txt"]', "is not a .py file"),
         )
@@ -1186,6 +1200,23 @@ class DoctestAndTimingTests(StepHarness, unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn("::warning::doctest-paths entry '.' skips files", result.stdout)
         self.assertIn("my-scripts/tool.py", result.stdout)
+        self.assertNotIn("pkg/mod.py", result.stdout)
+
+    def test_pytest_accepts_doctest_files_without_module_names(self):
+        files = {
+            "tests/test_ok.py": "",
+            "my-scripts/build-docs.py": "",
+            ".github/scripts/release.py": "",
+        }
+        for paths in ('["my-scripts/build-docs.py"]', '["."]'):
+            with self.subTest(paths=paths):
+                result = self.execute(
+                    files,
+                    {**PYTEST, "DOCTEST_PATHS": paths},
+                    step="Validate inputs",
+                )
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertNotIn("::warning::doctest-paths", result.stdout)
 
     def test_doctest_paths_outside_working_directory_are_rejected(self):
         files = {"app/tests/test_ok.py": "", "shared/util.py": ""}

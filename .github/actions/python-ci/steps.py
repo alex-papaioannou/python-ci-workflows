@@ -728,10 +728,10 @@ def module_name(file: Path) -> str | None:
     return ".".join(parts)
 
 
-def module_names(paths: list[str]) -> list[str]:
-    """Translate files and directories under the working directory into module names."""
+def doctest_modules(paths: list[str]) -> list[tuple[Path, str]]:
+    """Translate files and directories under the working directory into modules."""
     return [
-        name
+        (file, name)
         for path in paths
         for file in doctest_files(path)
         if (name := module_name(file))
@@ -741,24 +741,27 @@ def module_names(paths: list[str]) -> list[str]:
 def validate_doctest_paths() -> None:
     """Reject doctest paths that would crash or be skipped instead of running.
 
-    An explicit file must be an importable module. Inside a directory, files that
-    cannot be imported (for example under .github or a hyphenated directory) are
-    skipped with a warning, as before, but no longer silently.
+    pytest runs any .py file. unittest imports modules by name, so with unittest an
+    explicit file must have a module name, and files without one inside a directory
+    (for example under .github or a hyphenated directory) are skipped with a warning.
     """
+    unittest_runner = env("TEST_RUNNER", "unittest") != "pytest"
     for path in json.loads(env("DOCTEST_PATHS", "[]")):
         target = Path(path)
         if not target.resolve().is_relative_to(Path.cwd().resolve()):
             raise SystemExit(
                 f"doctest-paths entry {path!r} is outside working-directory"
             )
+        if target.is_file() and target.suffix != ".py":
+            raise SystemExit(f"doctest-paths entry {path!r} is not a .py file")
+        if not unittest_runner:
+            continue
         if target.is_file():
-            if target.suffix != ".py":
-                raise SystemExit(f"doctest-paths entry {path!r} is not a .py file")
             if module_name(target) is None:
                 raise SystemExit(
-                    f"doctest-paths entry {path!r} is not importable as a module from "
-                    "working-directory (each directory and file name must be a valid "
-                    "Python identifier)"
+                    f"doctest-paths entry {path!r} has no module name for unittest to "
+                    "import (each directory and file name must be a valid Python "
+                    "identifier); use the pytest runner for such files"
                 )
             continue
         skipped = [
@@ -769,9 +772,26 @@ def validate_doctest_paths() -> None:
                 f" and {len(skipped) - 5} more" if len(skipped) > 5 else ""
             )
             print(
-                f"::warning::doctest-paths entry {path!r} skips files that are not "
-                f"importable as modules: {shown}"
+                f"::warning::doctest-paths entry {path!r} skips files that have no "
+                f"module name for unittest to import: {shown}"
             )
+
+
+class MalformedDoctest(unittest.TestCase):
+    """Report a module whose doctests cannot be parsed as an error in the run."""
+
+    def __init__(self, module: str, message: str) -> None:
+        super().__init__("runTest")
+        self.module, self.message = module, message
+
+    def id(self) -> str:
+        return f"{self.module}.doctests"
+
+    def __str__(self) -> str:
+        return f"doctests ({self.module})"
+
+    def runTest(self) -> None:
+        raise ValueError(self.message)
 
 
 def doctest_suite() -> unittest.TestSuite:
@@ -779,11 +799,13 @@ def doctest_suite() -> unittest.TestSuite:
     import importlib
 
     suite = unittest.TestSuite()
-    for name in module_names(json.loads(env("DOCTEST_PATHS", "[]"))):
+    for file, name in doctest_modules(json.loads(env("DOCTEST_PATHS", "[]"))):
+        module = importlib.import_module(name)
         try:
-            suite.addTest(doctest.DocTestSuite(importlib.import_module(name)))
+            suite.addTest(doctest.DocTestSuite(module))
         except ValueError as error:  # a malformed example
-            raise SystemExit(f"Malformed doctest in module {name}: {error}") from None
+            message = f"Malformed doctest in {file.as_posix()}: {error}"
+            suite.addTest(MalformedDoctest(name, message))
     return suite
 
 
