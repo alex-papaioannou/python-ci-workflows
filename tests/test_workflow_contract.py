@@ -521,12 +521,28 @@ class WorkflowTests(StepHarness, unittest.TestCase):
         importlib.util.find_spec("coverage"), "coverage is not installed"
     )
     def test_coverage_warns_when_nothing_was_measured(self):
-        files = {
-            "pyproject.toml": '[tool.coverage.run]\nomit = ["*"]\n',
-            "tests/test_ok.py": "import unittest\n\n\nclass T(unittest.TestCase):\n    def test_ok(self):\n        pass\n",
+        test = "import unittest\n\n\nclass T(unittest.TestCase):\n    def test_ok(self):\n        pass\n"
+        cases = {
+            "everything omitted": {
+                "pyproject.toml": '[tool.coverage.run]\nomit = ["*"]\n',
+                "tests/test_ok.py": test,
+            },
+            # The project is recorded as unexecuted source, so files were "measured".
+            "project never imported": {
+                "pyproject.toml": '[tool.coverage.run]\nomit = ["tests/*"]\n',
+                "lib.py": self.COVERED_LIB,
+                "tests/test_ok.py": test,
+            },
         }
+        for case, files in cases.items():
+            with self.subTest(case=case):
+                result = self.execute_keep(files, {"COVERAGE_VERSION": "7.16.2"})
+                self.assertIn("::warning::Coverage collected no data", result.stdout)
+        uses_lib = "import unittest\n\nfrom lib import a\n\n\nclass T(unittest.TestCase):\n    def test_a(self):\n        self.assertEqual(a(), 1)\n"
+        files = {"lib.py": self.COVERED_LIB, "tests/test_lib.py": uses_lib}
         result = self.execute_keep(files, {"COVERAGE_VERSION": "7.16.2"})
-        self.assertIn("::warning::Coverage measured no files", result.stdout)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertNotIn("Coverage collected no data", result.stdout)
 
     @unittest.skipUnless(
         importlib.util.find_spec("coverage"), "coverage is not installed"
