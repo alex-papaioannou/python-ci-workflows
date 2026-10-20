@@ -1384,10 +1384,11 @@ class WheelTests(StepHarness, unittest.TestCase):
     def test_wheel_tests_honour_require_hashes_false_for_a_uv_lock(self):
         # A path source exports without a hash, so only an unhashed install works.
         fixture = Path(__file__).parent / "fixtures/wheel-path-lock"
+        # Only the sources: CI's compile step leaves __pycache__ in the fixture.
         files = {
             path.relative_to(fixture).as_posix(): path.read_text()
             for path in fixture.rglob("*")
-            if path.is_file()
+            if path.is_file() and "__pycache__" not in path.parts
         }
         files.update(
             {
