@@ -2,6 +2,7 @@
 
 import importlib.util
 import os
+import re
 import subprocess
 import sys
 import tempfile
@@ -165,6 +166,11 @@ class ReleaseOrderTests(unittest.TestCase):
         release_notes.check_not_older("1.10.0", ["v1.9.0"])
         with self.assertRaises(SystemExit):
             release_notes.check_not_older("1.9.0", ["v1.10.0"])
+
+    def test_repository_changelog_collects_changes_under_unreleased(self):
+        changelog = (SCRIPT.parents[2] / "CHANGELOG.md").read_text(encoding="utf-8")
+        first_section = re.search(r"(?m)^## (.*)$", changelog).group(1)
+        self.assertEqual(first_section, "[Unreleased]")
 
     def test_repository_changelog_parses(self):
         changelog = (SCRIPT.parents[2] / "CHANGELOG.md").read_text(encoding="utf-8")
