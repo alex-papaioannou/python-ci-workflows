@@ -1,0 +1,5 @@
+# Linters for this repository's own workflow files. Compile with:
+# uv pip compile --generate-hashes --universal --python-version 3.13 requirements-lint.in -o requirements-lint.txt
+actionlint-py==1.7.12.25
+zizmor==1.31.1
+check-jsonschema==0.38.2
