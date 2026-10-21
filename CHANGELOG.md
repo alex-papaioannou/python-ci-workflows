@@ -92,6 +92,17 @@ major tag such as `v1`, an exact release, or a commit SHA.
 
 ### Security
 
+- A call with `upload-dist` no longer has setup-python restore or save a pip cache,
+  on any of its matrix cells. A tag-push run could restore a cache saved by any
+  workflow on the default branch, and the build installs build and twine by version
+  and the build backend from the project's `[build-system] requires`, all without
+  hashes, so a poisoned cache entry could reach the published distributions. To keep
+  the cache on runs that do not publish, set `upload-dist` only on the runs that do,
+  or call the workflow a second time without it and give that call a `call-name`.
+  The workflow declares no `cache-mode`, so a `cache-mode` on the calling job limits
+  it without stopping it from starting. The README's security posture and
+  CONTRIBUTING's design rules list both guarantees, and the test suite checks them.
+
 ### Changed defaults
 
 ### Behaviour changes

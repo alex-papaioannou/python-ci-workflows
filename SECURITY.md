@@ -39,5 +39,11 @@ its latest release, for six months. The README's
   interpreter. To hash-check one of them, pin it in your hashed `requirements-file`
   at the same version the workflow requests; the workflow's install then finds it
   already satisfied.
+- In a call with `upload-dist`, setup-python restores and saves no pip cache, so an
+  Actions cache entry that another workflow saved cannot reach the distributions you
+  publish. A self-hosted runner that is not ephemeral still keeps pip's and uv's own
+  caches between jobs, so run that call on GitHub-hosted or ephemeral runners. The
+  workflow declares no `cache-mode`; set one on your calling job to limit its cache
+  access further.
 - pip-audit runs from its own temporary environment and audits the installed
   packages without importing them.

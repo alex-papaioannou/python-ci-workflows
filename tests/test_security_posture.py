@@ -42,6 +42,18 @@ def steps():
         yield f"{ACTION.name} / {step.get('name')}", step
 
 
+def key_paths(node, name, path=()):
+    """Yield the path to every mapping key called name, ignoring case, in parsed YAML."""
+    if isinstance(node, dict):
+        for key, value in node.items():
+            if str(key).lower() == name:
+                yield (*path, key)
+            yield from key_paths(value, name, (*path, key))
+    elif isinstance(node, list):
+        for index, value in enumerate(node):
+            yield from key_paths(value, name, (*path, index))
+
+
 @unittest.skipUnless(yaml, "needs PyYAML")
 class SecurityPostureTests(unittest.TestCase):
     def setUp(self):
@@ -117,6 +129,47 @@ class SecurityPostureTests(unittest.TestCase):
                 with self.subTest(uses=where):
                     self.assertRegex(uses, r"@[0-9a-f]{40}$")
 
+    def test_a_call_that_uploads_dist_restores_no_pip_cache(self):
+        (setup,) = (
+            step
+            for step in self.workflow["jobs"]["test"]["steps"]
+            if step.get("uses", "").startswith("actions/setup-python@")
+        )
+        # The caller publishes the dist artifact, so no cell of that call may restore
+        # a pip cache that another run, on any trigger, could have written.
+        self.assertEqual(
+            setup["with"]["cache"],
+            "${{ !inputs.upload-dist && (inputs.requirements-file != ''"
+            " || inputs.install-project) && 'pip' || '' }}",
+        )
+
+    def test_the_workflow_never_declares_a_cache_mode(self):
+        # A caller's cache-mode caps the workflows it calls, and a called workflow
+        # that asks for more than its caller allows does not start. Comments may
+        # mention the key; only a declaration counts.
+        self.assertEqual(list(key_paths(self.workflow, "cache-mode")), [])
+        # The check finds a declaration at each level where one could appear.
+        text = WORKFLOW.read_text(encoding="utf-8")
+        job_steps = self.workflow["jobs"]["test"]["steps"]
+        validate = [step.get("name") for step in job_steps].index("Validate inputs")
+        for anchor, line, path in (
+            (
+                "\npermissions:\n  contents: read\n",
+                "cache-mode: read\n",
+                ("cache-mode",),
+            ),
+            ("\n  test:\n", "    cache-mode: read\n", ("jobs", "test", "cache-mode")),
+            (
+                "      - name: Validate inputs\n",
+                "        Cache-Mode: none\n",
+                ("jobs", "test", "steps", validate, "Cache-Mode"),
+            ),
+        ):
+            with self.subTest(path=path):
+                self.assertIn(anchor, text)
+                planted = yaml.safe_load(text.replace(anchor, anchor + line, 1))
+                self.assertEqual(list(key_paths(planted, "cache-mode")), [path])
+
 
 class PostureDocumentationTests(unittest.TestCase):
     def test_readme_and_contributing_state_each_guarantee(self):
@@ -129,6 +182,8 @@ class PostureDocumentationTests(unittest.TestCase):
             "`${{ }}`",
             "`Validate inputs`",
             "`require-hashes`",
+            "`upload-dist`",
+            "`cache-mode`",
             "breaking change",
         )
         for name, title, link in (

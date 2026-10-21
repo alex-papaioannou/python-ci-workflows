@@ -206,7 +206,11 @@ jobs:
         with:
           python-version: ${{ matrix.python-version }}
           allow-prereleases: ${{ inputs.allow-prereleases }}
-          cache: ${{ (inputs.requirements-file != '' || inputs.install-project) && 'pip' || '' }}
+          # The caller publishes what upload-dist uploads, so that call restores no pip
+          # cache another run could have written. Callers limit cache access with their
+          # own job-level cache-mode; never declare one here, because a called workflow
+          # that asks for more than its caller allows does not start.
+          cache: ${{ !inputs.upload-dist && (inputs.requirements-file != '' || inputs.install-project) && 'pip' || '' }}
           cache-dependency-path: ${{ inputs.requirements-file != '' && format('{0}/{1}', inputs.working-directory, inputs.requirements-file) || inputs.install-project && format('{0}/pyproject.toml', inputs.working-directory) || '' }}
       - name: Load step scripts
         uses: $/.github/actions/python-ci
