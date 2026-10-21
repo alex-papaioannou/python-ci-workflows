@@ -1945,6 +1945,50 @@ class WheelTests(StepHarness, unittest.TestCase):
         )
         self.assertNotEqual(result.returncode, 0)
 
+    @unittest.skipUnless(yaml, "needs PyYAML")
+    def test_readme_says_the_wheel_test_runs_once_on_the_primary_cell(self):
+        # The wheel test runs inside the build step, which only the primary cell runs.
+        text = WORKFLOW.read_text()
+        build = text[text.index("- name: Build and check package") :]
+        build = build.split("\n      - ", 1)[0]
+        self.assertIn("steps.validate.outputs.primary == 'true'", build)
+        self.assertIn("TEST_WHEEL: ${{ inputs.test-wheel }}", build)
+        readme = (ROOT / "README.md").read_text(encoding="utf-8")
+        for name in ("build-package", "test-wheel"):
+            (row,) = re.findall(rf"^\| `{name}` \|.*$", readme, re.MULTILINE)
+            self.assertIn("once per run on the primary cell", row.lower(), name)
+        primary = re.search(r"(?ms)^### The primary cell\n(.*?)^#", readme).group(1)
+        self.assertIn("the wheel test", " ".join(primary.split()))
+        steps = re.search(r"(?ms)^## How it runs\n(.*?)^## ", readme).group(1)
+        (item,) = re.findall(r"(?ms)^\d+\. Build and check the package.*?^\d", steps)
+        self.assertIn("once per run on the primary cell", " ".join(item.split()))
+        # Each example that tests its wheel names that cell, the only one that does.
+        defaults = yaml.safe_load(text)[True]["workflow_call"]["inputs"]
+        jobs = yaml.safe_load((ROOT / ".github/workflows/examples.yml").read_text())
+        names = {"ubuntu": "Linux", "windows": "Windows", "macos": "macOS"}
+        for name, job in jobs["jobs"].items():
+            inputs = {key: value.get("default") for key, value in defaults.items()}
+            inputs.update(job["with"])
+            if not inputs["test-wheel"]:
+                continue
+            system = json.loads(inputs["operating-systems"])[0].split("-")[0]
+            experimental = json.loads(inputs["experimental-python-versions"])
+            python = next(
+                version
+                for version in json.loads(inputs["python-versions"])
+                if version not in experimental
+            )
+            bullet = re.search(rf"(?ms)^- `{name}`: (.*?)(?=^- |^$)", readme)
+            self.assertIsNotNone(bullet, name)
+            words = " ".join(bullet.group(1).split())
+            self.assertIn(
+                f"once, on the primary cell ({names[system]}, Python {python})", words
+            )
+            # Nothing said about the wheel names another operating system.
+            wheel = words[words.index("wheel") :]
+            for other in sorted(set(names.values()) - {names[system]}):
+                self.assertNotIn(other, wheel, name)
+
 
 class DoctestAndTimingTests(StepHarness, unittest.TestCase):
     MODULE = (

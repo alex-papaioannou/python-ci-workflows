@@ -215,7 +215,7 @@ inside the checkout. JSON arrays are passed as strings.
 | --- | --- | --- | --- |
 | `coverage-version` | string | `""` | Measure tests with this coverage.py version. The job summary shows the total and a collapsible per-file table with missing lines, and `coverage.xml` is uploaded as `coverage-<os>-<python>`. Code run in subprocesses and pytest-xdist workers is measured too (coverage.py 7.10.3 or later), and the project's own coverage settings such as `omit` and `branch` apply. |
 | `coverage-fail-under` | number | `0` | Fail when total coverage is below this percentage. |
-| `test-wheel` | boolean | `false` | After building, install the wheel in a fresh virtual environment and run only a copy of the tests against it. With a `requirements-file` (a `.txt`, `uv.lock` or `pylock.toml`), the locked dependencies are installed first, the same way as for the main tests (same installer, hash-checked unless `require-hashes` is false), then the wheel with `--no-deps`, replacing any copy of the project the lock installed, and the wheel's own requirements must be satisfied by the lock. Without one, the wheel and its `project-extras` resolve normally. pytest is `pytest-version` either way. This catches files missing from the wheel and broken package discovery. Requires `build-package`. |
+| `test-wheel` | boolean | `false` | Once per run on the primary cell, as part of the build, install the wheel in a fresh virtual environment and run only a copy of the tests against it. With a `requirements-file` (a `.txt`, `uv.lock` or `pylock.toml`), the locked dependencies are installed first, the same way as for the main tests (same installer, hash-checked unless `require-hashes` is false), then the wheel with `--no-deps`, replacing any copy of the project the lock installed, and the wheel's own requirements must be satisfied by the lock. Without one, the wheel and its `project-extras` resolve normally. pytest is `pytest-version` either way. This catches files missing from the wheel and broken package discovery, but not a packaging problem that shows only on another cell's operating system or Python version. Requires `build-package`. |
 | `build-package` | boolean | `false` | Build an sdist and wheel and run `twine check --strict`, once per run on the primary cell. Requires `pyproject.toml`. Nothing is published. |
 | `upload-dist` | boolean | `false` | After a successful build (and wheel tests, when enabled), upload the files as the `dist` artifact, plus the call suffix, for a publish job in your own workflow. Requires `build-package`. |
 
@@ -296,9 +296,10 @@ workflow itself, for example
 
 ### The primary cell
 
-Ruff, pip-audit and the package build run once per call, on the primary cell: the
-first entry of `operating-systems` with the first entry of `python-versions` that is
-not in `experimental-python-versions`. Their failures therefore always fail the run.
+Ruff, pip-audit, the package build and the wheel test run once per call, on the
+primary cell: the first entry of `operating-systems` with the first entry of
+`python-versions` that is not in `experimental-python-versions`. Their failures
+therefore always fail the run. No other cell builds or tests the wheel.
 The validation step warns when an experimental version is missing from
 `python-versions`, when every version is experimental, and when versions are given as
 JSON numbers (`3.10` as a number becomes `3.1`).
@@ -327,7 +328,8 @@ failing tests, and the ten slowest tests to the job summary.
 ## How it runs
 
 Each matrix job runs these steps in order. Steps for features you have not enabled
-are skipped.
+are skipped, and the audit, Ruff, the build and the wheel test run only on the
+[primary cell](#the-primary-cell).
 
 1. Check out the caller's repository without persisting credentials.
 2. Set up Python, with pip's download cache when `requirements-file` or
@@ -338,7 +340,8 @@ are skipped.
 4. Install requirements and the project, then audit them.
 5. Run Ruff, then mypy.
 6. Byte-compile `compile-paths`.
-7. Build and check the package, and optionally test the built wheel.
+7. Build and check the package, and optionally test the built wheel, once per run
+   on the primary cell.
 8. Run unittest or pytest, optionally under coverage, and write reports.
 9. Upload JUnit and coverage artifacts, even when tests fail.
 
@@ -448,8 +451,9 @@ request:
 
 - `stdlib-app`: unittest, doctests, 100% coverage and warnings as errors.
 - `src-package`: a src-layout package whose pytest tests run through
-  `test-runner: auto`, an editable install with extras, and a package build whose
-  wheel is tested on Linux and Windows.
+  `test-runner: auto` on Linux and Windows, an editable install with extras, and a
+  package build whose wheel is built and tested once, on the primary cell (Linux,
+  Python 3.11).
 - `uv-project`: dependencies locked in `uv.lock`, installed with uv without setting
   `installer`, and audited.
 
