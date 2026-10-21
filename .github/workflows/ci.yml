@@ -16,6 +16,10 @@ jobs:
       coverage-version: "7.16.2"
       coverage-fail-under: 75
       junit-file: "test-results/junit.xml"
+      # The tests are independent, so pytest-xdist (from requirements-dev.txt) runs
+      # them in parallel. The contract tests still cover the unittest runner.
+      test-runner: pytest
+      pytest-args: "-n 4 --dist worksteal"
       operating-systems: '["ubuntu-latest", "windows-latest", "macos-latest"]'
       python-versions: '["3.11", "3.12", "3.13", "3.14", "3.14t", "3.15"]'
       experimental-python-versions: '["3.14t"]'
