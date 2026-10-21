@@ -36,6 +36,16 @@ Tests find a workflow step by its `- name:`, read which `steps.py` subcommand it
 runs, and execute that subcommand in a temporary project. Renaming a step means
 updating the tests.
 
+CI runs the same suite through the workflow's pytest runner in four pytest-xdist
+workers; `python -m pytest -n 4 tests` runs it the same way locally. Tests must
+therefore pass in any order and in separate processes. Some steps pip-install a tool
+into the interpreter running the tests, and parallel installs of one package into
+one interpreter break each other, so `requirements-dev.in` pins build and twine at
+the versions the build step installs; a test checks they agree. Change them in
+`steps.py` and the lock together; Dependabot leaves them alone. The smoke job's
+`Audit dependencies` step audits them and their dependencies too, so an advisory
+against any of them fails the smoke test, and blocks releases, until the lock moves.
+
 ## Releases
 
 Releases follow semantic versioning and the README's

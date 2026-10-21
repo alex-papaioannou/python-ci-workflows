@@ -1,9 +1,11 @@
 """Run the workflow's step scripts against temporary consumer projects."""
 
+import argparse
 import importlib.util
 import json
 import os
 import re
+import shlex
 import shutil
 import subprocess
 import sys
@@ -20,6 +22,8 @@ except ImportError:  # pragma: no cover - requirements-dev.txt installs PyYAML
 ROOT = Path(__file__).parents[1]
 WORKFLOW = ROOT / ".github/workflows/python-ci.yml"
 STEPS = ROOT / ".github/actions/python-ci/steps.py"
+SMOKE = ROOT / ".github/workflows/ci.yml"
+DEV_REQUIREMENTS = ROOT / "requirements-dev.txt"
 
 # Variables the workflow sets from its inputs. Inner runs must not inherit them from
 # the outer environment (this repository's own CI sets several for its test step).
@@ -1781,3 +1785,55 @@ class HarnessIsolationTests(StepHarness, unittest.TestCase):
                 scratch = steps.scratch_dir("x-")
             self.assertEqual(os.path.dirname(scratch), missing)
             self.assertTrue(os.path.isdir(scratch))
+
+
+def locked_versions():
+    """Return the versions requirements-dev.txt pins, by canonical project name."""
+    pins = re.findall(
+        r"^([A-Za-z0-9][A-Za-z0-9._-]*)==([^\s;\\]+)",
+        DEV_REQUIREMENTS.read_text(encoding="utf-8"),
+        re.MULTILINE,
+    )
+    return {re.sub(r"[-_.]+", "-", name).lower(): version for name, version in pins}
+
+
+class ParallelSelfTestTests(unittest.TestCase):
+    """This repository's CI runs these tests in parallel pytest-xdist workers."""
+
+    @unittest.skipUnless(yaml, "needs PyYAML")
+    def test_the_smoke_test_runs_the_suite_in_parallel_workers(self):
+        workflow = yaml.safe_load(SMOKE.read_text(encoding="utf-8"))
+        inputs = workflow["jobs"]["smoke"]["with"]
+        self.assertEqual(inputs.get("test-runner"), "pytest")
+        # Read the worker count the way pytest's parser does, so that -n4,
+        # --numprocesses=4 and -n auto count as well as -n 4.
+        parser = argparse.ArgumentParser(add_help=False, allow_abbrev=False)
+        parser.add_argument("-n", "--numprocesses")
+        args = shlex.split(inputs.get("pytest-args", ""))
+        workers = parser.parse_known_args(args)[0].numprocesses
+        self.assertIsNotNone(workers, "pytest-args does not set -n")
+        if workers not in ("auto", "logical"):
+            self.assertGreater(int(workers), 1)
+        # -n comes from pytest-xdist, which the smoke job installs from the lock.
+        self.assertEqual(inputs["requirements-file"], DEV_REQUIREMENTS.name)
+        self.assertIn("pytest-xdist", locked_versions())
+
+    def test_the_build_step_finds_its_tools_already_installed(self):
+        # Several tests run the build step with the interpreter that runs the suite,
+        # and pip installs of one package into one interpreter from parallel workers
+        # break each other. With the same versions locked, the step installs nothing.
+        steps = load_steps()
+        with (
+            tempfile.TemporaryDirectory() as runner_temp,
+            unittest.mock.patch.dict(os.environ, {"RUNNER_TEMP": runner_temp}),
+            unittest.mock.patch.object(steps, "tool") as tool,
+            unittest.mock.patch.object(steps, "python", return_value=1),
+            self.assertRaises(SystemExit),
+        ):
+            steps.build()
+        installed = dict(call.args[0].split("==") for call in tool.call_args_list)
+        self.assertEqual(set(installed), {"build", "twine"})
+        locked = locked_versions()
+        for name, version in installed.items():
+            with self.subTest(tool=name):
+                self.assertEqual(locked.get(name), version)

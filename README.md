@@ -341,6 +341,10 @@ python -m pip install --require-hashes -r requirements-dev.txt
 python -m unittest discover -s tests
 ```
 
+This repository's CI runs the same suite with the workflow's pytest runner in four
+parallel workers (`pytest-args: "-n 4 --dist worksteal"`, with pytest-xdist from
+`requirements-dev.txt`); `python -m pytest -n 4 tests` does the same locally.
+
 The `examples/` directory holds three small consumer projects that the
 `Example consumers` workflow runs through the real reusable workflow on every pull
 request:

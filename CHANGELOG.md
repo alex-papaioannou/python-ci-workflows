@@ -26,6 +26,10 @@ major tag such as `v1`, an exact release, or a commit SHA.
   longer ship in a 1.x release. Each Breaking changes entry links its UPGRADING.md
   entry, which the test suite checks, and the release notes point those links at
   the released tag.
+- This repository's smoke test runs its own test suite in four parallel
+  pytest-xdist workers through the workflow's pytest runner. `requirements-dev.txt`
+  now also locks build and twine at the versions the build step installs, so
+  parallel tests never install them into the same interpreter at once.
 
 ### Fixed
 

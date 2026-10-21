@@ -2,3 +2,7 @@ pytest==9.1.1
 pytest-xdist==3.8.0
 pyyaml==6.0.3
 types-pyyaml==6.0.12.20260906
+# The versions the build step in steps.py installs; change them together. Installed
+# up front, they keep parallel test workers from installing them at the same time.
+build==1.6.1
+twine==7.0.0
