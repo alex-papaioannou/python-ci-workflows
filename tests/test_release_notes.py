@@ -1004,6 +1004,21 @@ class ReadmePinTests(unittest.TestCase):
                 text = caller.read_text(encoding="utf-8")
                 self.assertEqual(WORKFLOW_CALL.findall(text), [ref])
 
+    def test_every_recipe_calls_the_release_the_quick_start_pins(self):
+        # People copy a recipe whole, so it pins a release like the quick start,
+        # and the pull request that moves the README's pin moves the recipes' too.
+        ref, _, _ = self.quick_start_pin()
+        calls = []
+        for path in sorted((ROOT / "docs").glob("*.md")):
+            text = path.read_text(encoding="utf-8")
+            found = WORKFLOW_CALL.findall(text)
+            with self.subTest(document=path.name):
+                self.assertLessEqual(set(found), {ref})
+                # Every call names this repository's workflow, as the line does.
+                self.assertEqual(len(found), text.count("/python-ci.yml@"))
+            calls += found
+        self.assertGreaterEqual(len(calls), 8)
+
     def test_quick_start_pin_is_the_release_commit(self):
         # CI checks out one commit without tags, so the tag is looked up on GitHub
         # when it is not fetched, and a mistyped SHA in the pull request that

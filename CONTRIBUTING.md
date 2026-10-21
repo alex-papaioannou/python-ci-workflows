@@ -218,21 +218,22 @@ tag (`vX`) to the same commit. Releases run only from `main`, in the `release`
 environment.
 
 After each release, open a pull request that updates the pinned SHA in the README
-and the example callers: replace every `uses:` line pinned to the previous release,
-`# vX.Y.Z` comment included, with the line from the new release's notes. In the
-example callers, also pass the inputs the new release added, and replace each
-stand-in that the new release makes unnecessary with its job's setting in
-`examples.yml` and remove its `STAND_INS` entry. The release commit cannot name its
-own SHA, and `release.yml` does not commit to `main`, which changes only through
+and the example callers, and in `docs/recipes.md`: replace every `uses:` line pinned
+to the previous release, `# vX.Y.Z` comment included, with the line from the new
+release's notes. In the example callers, also pass the inputs the new release added,
+and replace each stand-in that the new release makes unnecessary with its job's
+setting in `examples.yml` and remove its `STAND_INS` entry. In the recipes, drop the
+Unreleased notes about what the new release ships. The release commit cannot name
+its own SHA, and `release.yml` does not commit to `main`, which changes only through
 pull requests. The test suite fails while the quick start pins a release
 older than the two newest in `CHANGELOG.md`, so the next release pull request cannot
-merge before this one, and while an example caller pins another release. It also
-fails when the pinned SHA is not the commit of the release the comment names, which
-it looks up on GitHub when the tag is not fetched. Open it soon after the release:
-until it merges, a README example that passes an input the new release added still
-pins the previous release, which rejects that input, and the test suite does not
-compare a README example's inputs with its pin. The example callers leave such
-inputs out, and keep their stand-ins, until their pin moves.
+merge before this one, and while an example caller or a recipe pins another release.
+It also fails when the pinned SHA is not the commit of the release the comment names,
+which it looks up on GitHub when the tag is not fetched. Open it soon after the
+release: until it merges, a README example that passes an input the new release
+added still pins the previous release, which rejects that input, and the test suite
+does not compare a README example's inputs with its pin. The example callers leave
+such inputs out, and keep their stand-ins, until their pin moves.
 
 From v2 on, the support policy gives the previous major version security fixes for
 six months, as patch releases from a maintenance branch. Before v3.0.0 ships, three
