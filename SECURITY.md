@@ -12,11 +12,16 @@ contact and contains no vulnerability details.
 
 ## Supported versions
 
-Only the latest release of the current major version receives fixes. The major tag
-(such as `v1`) moves to every new release of that major version, so a caller pinned
-to `@v1` picks up fixes, and any other change, automatically. To review each update
+The latest release of the current major version receives fixes. The major tag (such
+as `v1`) moves to every new release of that major version, so a caller pinned to
+`@v1` picks up fixes, and any other change, automatically. To review each update
 before it runs, pin a full commit SHA instead; see
 [Choosing a ref](README.md#choosing-a-ref).
+
+v1 receives no releases after v2.0.0. From v2 on, when a new major version is
+released, the previous major version receives security fixes, as patch releases of
+its latest release, for six months. The README's
+[support policy](README.md#support-policy) has the details.
 
 ## What the workflow does and does not protect
 

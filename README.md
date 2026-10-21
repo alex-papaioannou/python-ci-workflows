@@ -55,7 +55,8 @@ builds are easy to tell apart.
 ### Choosing a ref
 
 - `@v1` follows compatible releases of major version 1. Breaking changes ship only in
-  a new major version, and [UPGRADING.md](UPGRADING.md) shows how to move to it.
+  a new major version, and [UPGRADING.md](UPGRADING.md) shows how to move to it. The
+  [support policy](#support-policy) says what a release may change.
 - `@v1.2.3` or a full commit SHA never changes. A SHA is the most tamper-resistant
   choice, and Dependabot can keep it current.
 - `@main` gets unreleased changes and is not recommended for consumers.
@@ -267,6 +268,65 @@ Third-party actions are pinned to full commit SHAs, and tool versions are pinned
 explicitly. The step scripts are fetched at the same commit as the workflow, without
 checking out anything into your workspace. This needs a GitHub-hosted runner, or a
 self-hosted runner on version 2.336.0 or newer.
+
+## Support policy
+
+- **Platforms.** github.com and GitHub Enterprise Cloud are supported. GitHub
+  Enterprise Server is not: it lacks the same-repository `$/` action reference that
+  loads the step scripts, and `actions/upload-artifact` v4 or later, which uploads
+  the reports.
+- **Runners.** This repository's CI runs on `ubuntu-latest`, `windows-latest` and
+  `macos-latest`. Self-hosted runners need runner version 2.336.0 or newer, `bash` on
+  `PATH` (Git Bash on Windows), and `actions/setup-python` support for every version
+  in the matrix.
+- **Python.** A release's support window is the CPython versions in its default
+  `python-versions`: 3.11 through 3.14 in v1. The window changes only when that
+  default does, under the rules below, and the planned `python-versions: auto` will
+  resolve against it. 3.11 stays in it at least until its end of life in October
+  2027. Free-threaded builds such as `3.14t` (tested on Linux), and newer versions
+  this repository's CI already tests, such as 3.15, work when listed explicitly.
+  Versions older than 3.11 get a warning.
+- **Default changes.** An input's default, and what that default does, change only
+  in a major release, listed under "Breaking changes" in [CHANGELOG.md](CHANGELOG.md)
+  with an entry in [UPGRADING.md](UPGRADING.md) that shows how to keep the old
+  behaviour. So a new CPython release joins the default `python-versions`, and an
+  end-of-life one leaves it, in the next major release. The one exception is a tool
+  version default, such as `uv-version`, whose version has a published
+  vulnerability: it moves to a fixed release in a minor or patch release, listed
+  under "Security".
+- **Pinned tools and actions.** build, twine and the actions the workflow uses, such
+  as `actions/checkout`, are pinned without an input. New versions of them may ship
+  in a minor release, listed under "Changed defaults", or under "Security" when they
+  fix a vulnerability. When an action update needs a newer runner, the self-hosted
+  runner floor above rises in the same release, but only to a runner version
+  released at least 30 days earlier: GitHub stops queueing jobs on a self-hosted
+  runner that has left an update uninstalled for 30 days, so no runner it still
+  serves is left out.
+- **v2.0.0** carries the default changes scheduled so far: `test-runner`,
+  `test-directory`, `test-pattern`, `lint-paths`, coverage that honours the
+  project's own `source` and `fail_under` settings, and Python 3.15 in
+  `python-versions`.
+- **No run-time notice.** A called workflow cannot tell a defaulted input from one
+  the caller passed, so it cannot warn the callers that a scheduled default change
+  will affect. Such a change is announced in CHANGELOG.md, under "Breaking changes"
+  in the Unreleased section as soon as it merges, and in UPGRADING.md, rather than by
+  a warning in the run.
+- **Hidden failures.** A fix that makes the workflow report a failure it used to
+  hide, such as a malformed doctest it skipped, may ship in a minor release under
+  "Behaviour changes": a run that passed without really running a check was a
+  defect, not a promise. A fix that changes a default or what it does, such as the
+  `test-directory`, `test-pattern` and coverage changes above, waits for the next
+  major release.
+- **Deprecation.** A deprecated input stays declared, and keeps working, until the
+  next major release. When a call sets it to anything but its default, the
+  "Validate inputs" step prints a `::warning::` that names its replacement.
+- **Breaking changes** need a new major version: removing or renaming an input or
+  output, changing an input's type or default, and any other change that can fail
+  an existing caller's run, other than the security fixes, pinned tool and action
+  updates and hidden-failure fixes above.
+- **Previous major versions.** v1 receives no releases after v2.0.0. From v2 on,
+  when a new major version is released, the previous major version receives
+  security fixes, as patch releases of its latest release, for six months.
 
 ## Development
 
