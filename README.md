@@ -293,3 +293,8 @@ They double as copy-and-paste starting points. This repository's CI also calls t
 workflow on itself on Linux, Windows and macOS with most features enabled, and lints the workflow files with actionlint and zizmor. See
 [CONTRIBUTING.md](CONTRIBUTING.md) for conventions and [CHANGELOG.md](CHANGELOG.md)
 for release history.
+
+## License
+
+MIT. See [LICENSE](LICENSE). The examples carry the same license, so they can be copied
+into any project.
