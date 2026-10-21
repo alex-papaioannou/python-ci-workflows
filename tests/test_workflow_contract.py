@@ -1132,6 +1132,126 @@ class WorkflowTests(StepHarness, unittest.TestCase):
         self.assertIn("KeyError", result.stderr)
 
 
+RUFF = {"RUFF_VERSION": "0.17.0", "LINT_PATHS": '["."]'}
+RUFF_NOTICE = (
+    "::notice::Found no ruff.toml, .ruff.toml or pyproject.toml with a [tool.ruff] "
+    "table in working-directory or its parents in the checkout{}, so Ruff applies its "
+    "default rule set to files that no Ruff configuration covers."
+)
+MARKDOWN = "Python code blocks in Markdown files"
+# A pyproject.toml without a [tool.ruff] table, which Ruff skips.
+PROJECT = '[project]\nname = "pkg"\nversion = "1"\n'
+
+
+class RuffConfigurationNoticeTests(StepHarness, unittest.TestCase):
+    python: str
+
+    @classmethod
+    def setUpClass(cls):
+        # Ruff goes into a venv of its own, so parallel workers never install it into
+        # the interpreter running the tests at the same time.
+        venv = tempfile.mkdtemp()
+        cls.addClassCleanup(shutil.rmtree, venv, ignore_errors=True)
+        subprocess.run([sys.executable, "-m", "venv", venv], check=True)
+        cls.python = str(
+            Path(venv) / ("Scripts/python.exe" if os.name == "nt" else "bin/python")
+        )
+
+    def lint(self, files, working_directory=".", env=None):
+        return self.execute(
+            files,
+            {**RUFF, **(env or {})},
+            step="Lint with Ruff",
+            executable=self.python,
+            working_directory=working_directory,
+        )
+
+    def assert_notice(self, result, where=""):
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertEqual(result.stdout.count("::notice::"), 1, result.stdout)
+        self.assertIn(RUFF_NOTICE.format(where), result.stdout)
+
+    def test_notice_without_ruff_configuration(self):
+        cases = {
+            "pyproject.toml files without [tool.ruff]": {
+                "pyproject.toml": "[tool.black]\nline-length = 88\n",
+                "pkg/pyproject.toml": PROJECT,
+            },
+            # tomllib rejects a byte order mark, which Ruff skips.
+            "pyproject.toml with a byte order mark": {
+                "pkg/pyproject.toml": b"\xef\xbb\xbf" + PROJECT.encode(),
+            },
+        }
+        for case, files in cases.items():
+            with self.subTest(case=case):
+                result = self.lint({**files, "pkg/app.py": "VALUE = 1\n"}, "pkg")
+                self.assert_notice(result)
+                self.assertIn(MARKDOWN, result.stdout)
+
+    def test_notice_names_lint_paths_without_configuration(self):
+        files = {
+            "src/ruff.toml": "",
+            "src/app.py": "VALUE = 1\n",
+            "tests/test_app.py": "VALUE = 1\n",
+        }
+        result = self.lint(files, env={"LINT_PATHS": '["src", "tests", "."]'})
+        self.assert_notice(result, ', or in or above lint-paths entries ["tests"]')
+
+    def test_notice_leaves_out_markdown_without_ruff_format(self):
+        result = self.lint({"app.py": "VALUE = 1\n"}, env={"RUFF_FORMAT": "false"})
+        self.assert_notice(result)
+        self.assertNotIn(MARKDOWN, result.stdout)
+
+    def test_notice_ignores_configuration_above_the_checkout(self):
+        with tempfile.TemporaryDirectory() as directory:
+            Path(directory, "ruff.toml").write_text("")
+            checkout = Path(directory, "checkout")
+            checkout.mkdir()
+            (checkout / "app.py").write_text("VALUE = 1\n")
+            result = self.run_step(checkout, "Lint with Ruff", RUFF, self.python)
+        self.assert_notice(result)
+
+    def test_no_notice_with_ruff_configuration(self):
+        section = "[tool.ruff]\nline-length = 100\n"
+        cases = {
+            "ruff.toml": ({"ruff.toml": ""}, ".", {}),
+            ".ruff.toml": ({".ruff.toml": ""}, ".", {}),
+            "[tool.ruff] in pyproject.toml": ({"pyproject.toml": section}, ".", {}),
+            "[tool.ruff] in a pyproject.toml with a byte order mark": (
+                {"pyproject.toml": b"\xef\xbb\xbf" + section.encode()},
+                ".",
+                {},
+            ),
+            "ruff.toml in a parent": ({"ruff.toml": ""}, "pkg", {}),
+            ".ruff.toml in a parent": ({".ruff.toml": ""}, "pkg", {}),
+            # Ruff skips a pyproject.toml without [tool.ruff] and keeps looking.
+            "[tool.ruff] in a parent's pyproject.toml": (
+                {"pyproject.toml": section, "pkg/pyproject.toml": PROJECT},
+                "pkg",
+                {},
+            ),
+            # Ruff looks above each file it checks, not only above working-directory.
+            "ruff.toml in each lint path": (
+                {"pkg/ruff.toml": "", "src/.ruff.toml": "", "src/app.py": ""},
+                ".",
+                {"LINT_PATHS": '["pkg", "src/app.py"]'},
+            ),
+        }
+        for case, (files, working_directory, env) in cases.items():
+            with self.subTest(case=case):
+                project = {**files, "pkg/app.py": "VALUE = 1\n"}
+                result = self.lint(project, working_directory, env)
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                self.assertNotIn("::notice::", result.stdout)
+
+    def test_no_notice_for_a_pyproject_toml_ruff_cannot_read(self):
+        # Ruff reports the parse error itself.
+        result = self.lint({"pyproject.toml": "[project\n", "app.py": "VALUE = 1\n"})
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("Failed to parse", result.stdout + result.stderr)
+        self.assertNotIn("::notice::", result.stdout)
+
+
 PYTEST = {"TEST_RUNNER": "pytest", "PYTEST_VERSION": "9.1.1"}
 
 

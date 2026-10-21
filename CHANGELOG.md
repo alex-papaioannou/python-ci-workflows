@@ -69,6 +69,15 @@ major tag such as `v1`, an exact release, or a commit SHA.
   `requirements-dev.in` now pins uv next to pytest, and a test fails when either pin
   differs from the `uv-version` or `pytest-version` default, so a Dependabot update
   of either tool fails CI until the default is reviewed.
+- When `ruff-version` is set and a `lint-paths` entry has no `ruff.toml`,
+  `.ruff.toml` or `pyproject.toml` with a `[tool.ruff]` table in it, in
+  `working-directory` or in their parents inside the checkout, the Ruff step prints
+  a notice. It names the files looked for and any such entry other than
+  `working-directory`, and says that Ruff applies its default rule set, over 400
+  rules from Ruff 0.16, to files that no configuration covers. With `ruff-format`
+  it adds that `ruff format` also checks Python code blocks in Markdown files from
+  0.16. It suggests choosing rules with `lint.select` or setting `lint-paths` to
+  narrow the checks. Ruff's results are unchanged.
 
 ### Changed
 

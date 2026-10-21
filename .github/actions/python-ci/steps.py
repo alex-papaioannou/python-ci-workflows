@@ -700,9 +700,70 @@ def audit() -> int:
     return code
 
 
+def ruff_configured(path: str) -> bool:
+    """Return whether path or a parent inside the checkout configures Ruff.
+
+    Ruff reads the closest ruff.toml, .ruff.toml or pyproject.toml with a [tool.ruff]
+    table. Like Ruff, this skips a byte order mark. A pyproject.toml that is still not
+    valid TOML counts, since Ruff reports it.
+    """
+    import tomllib
+
+    root = Path(env("GITHUB_WORKSPACE") or os.getcwd()).resolve()
+    start = Path(path).resolve()
+    # For a file, the first directory that can hold configuration is its parent.
+    for directory in (start, *start.parents):
+        if not directory.is_relative_to(root):
+            break
+        if (directory / "ruff.toml").is_file() or (directory / ".ruff.toml").is_file():
+            return True
+        pyproject = directory / "pyproject.toml"
+        if pyproject.is_file():
+            try:
+                data = pyproject.read_bytes().removeprefix(b"\xef\xbb\xbf")
+                settings = tomllib.loads(data.decode()).get("tool")
+            except (OSError, ValueError):
+                return True
+            if isinstance(settings, dict) and isinstance(settings.get("ruff"), dict):
+                return True
+    return False
+
+
+def ruff_notice(paths: list[str]) -> str:
+    """Return a notice if Ruff applies its default rule set to a lint path, else "".
+
+    Ruff configures each file from the closest configuration above it, and falls back
+    to the one closest to working-directory. Configuration below a lint path is not
+    looked for.
+    """
+    if ruff_configured("."):
+        return ""
+    unconfigured = [path for path in paths if not ruff_configured(path)]
+    if not unconfigured:
+        return ""
+    # Working-directory is named already, so a lint path such as "." is left out.
+    here = Path.cwd().resolve()
+    named = [path for path in unconfigured if Path(path).resolve() != here]
+    where = f", or in or above lint-paths entries {json.dumps(named)}" if named else ""
+    markdown = ""
+    if flag("RUFF_FORMAT", default=True):
+        markdown = ", and ruff format also checks Python code blocks in Markdown files"
+    return (
+        "::notice::Found no ruff.toml, .ruff.toml or pyproject.toml with a [tool.ruff] "
+        f"table in working-directory or its parents in the checkout{where}, so Ruff "
+        "applies its default rule set to files that no Ruff configuration covers. From "
+        f"Ruff 0.16 that set has over 400 rules{markdown}. To narrow the checks, select "
+        "rules with lint.select in ruff.toml or a [tool.ruff] table, or set lint-paths."
+    )
+
+
 def ruff() -> int:
     tool("ruff==" + env("RUFF_VERSION"), "Ruff")
     paths = json_paths("LINT_PATHS")
+    notice = ruff_notice(paths)
+    if notice:
+        # Flushed so the notice comes before the findings it explains.
+        print(notice, flush=True)
     failed = python("-m", "ruff", "check", "--output-format=github", *paths)
     if flag("RUFF_FORMAT", default=True):
         failed = python("-m", "ruff", "format", "--check", "--diff", *paths) or failed
