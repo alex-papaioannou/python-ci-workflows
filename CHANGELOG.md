@@ -5,6 +5,8 @@ major tag such as `v1`, an exact release, or a commit SHA.
 
 ## [Unreleased]
 
+## [1.1.0] - 2026-10-21
+
 ### Added
 
 - An MIT license. The example projects declare it too, so they can be copied freely.
