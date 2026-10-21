@@ -205,7 +205,7 @@ that introduced the input; Unreleased means it is on `main` but not in a release
 | --- | --- | --- | --- | --- |
 | `compile-paths` | string | `["."]` | 1.0.0 | JSON array of files or directories to byte-compile. |
 | `compile-exclude` | string | `""` | 1.0.0 | Python regex of paths to skip while compiling. Match either separator, such as `[/\\]generated[/\\]`. |
-| `ruff-version` | string | `""` | 1.0.0 | Run `ruff check` at this version, once per run on the primary cell. Empty disables Ruff. |
+| `ruff-version` | string | `""` | 1.0.0 | Run `ruff check` at this version, once per run on the primary cell. Empty disables Ruff. Files that no `ruff.toml`, `.ruff.toml` or `[tool.ruff]` table in `pyproject.toml` covers get Ruff's default rule set (over 400 rules from Ruff 0.16), and from 0.16 `ruff-format` also checks Python code blocks in Markdown files. The step prints a notice when a `lint-paths` entry has no such configuration in it, in `working-directory` or in their parents inside the checkout. |
 | `ruff-format` | boolean | `true` | 1.0.0 | Also run `ruff format --check` when Ruff is enabled. |
 | `lint-paths` | string | `["."]` | 1.0.0 | JSON array of paths for Ruff and mypy. |
 | `mypy-version` | string | `""` | 1.0.0 | Type-check `lint-paths` with this mypy version on every matrix job. Empty disables mypy. |
