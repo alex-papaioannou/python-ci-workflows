@@ -19,6 +19,12 @@ before it runs, pin a full commit SHA instead, as the README's quick start does;
 [Choosing a ref](README.md#choosing-a-ref) and
 [Staying up to date](README.md#staying-up-to-date).
 
+A fix listed under Security in the `## [Unreleased]` section of
+[CHANGELOG.md](CHANGELOG.md) is released within 7 days of merging. Until then it is
+only on `main`. A check in this repository runs every week and fails once such a
+fix has waited longer, so a missed release is reported at most a week after the
+deadline.
+
 v1 receives no releases after v2.0.0. From v2 on, when a new major version is
 released, the previous major version receives security fixes, as patch releases of
 its latest release, for six months. The README's

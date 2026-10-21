@@ -3155,3 +3155,206 @@ class ToolDefaultTests(unittest.TestCase):
             for rule in update.get("ignore", [])
         }
         self.assertEqual(ignored & {"pytest", "uv"}, set())
+
+
+# The opening or closing line of a fenced code block, and its info string.
+CODE_FENCE = re.compile(r"[ \t]*(`{3,}|~{3,})[ \t]*([^`\s]*)")
+CALLED_WORKFLOW = re.compile(r"(?:^|/)\.github/workflows/python-ci\.yml(?:@|$)")
+
+
+def yaml_blocks(markdown):
+    """Yield (line, paragraph, text) for each YAML code block in Markdown.
+
+    line is the number of the opening fence's line, and paragraph the text of the
+    run of non-blank lines directly before the fence, or "" after another block. A
+    block of any language that never closes runs to the end of the file and hides
+    the blocks after it, so it is yielded with text None.
+    """
+    paragraph, previous_blank = [], True
+    fence = None  # (marker, language, line, paragraph, lines) of an open block.
+    for number, line in enumerate(markdown.splitlines(), 1):
+        marker = CODE_FENCE.match(line)
+        if fence is None and marker:
+            fence = (marker.group(1), marker.group(2), number, " ".join(paragraph), [])
+        elif fence is None:
+            if line.strip() and previous_blank:
+                paragraph = []
+            if line.strip():
+                paragraph.append(line.strip())
+            previous_blank = not line.strip()
+        elif marker and not marker.group(2) and marker.group(1).startswith(fence[0]):
+            # A closing fence repeats the opening character at least as often.
+            if fence[1].lower() in ("yaml", "yml"):
+                yield fence[2], fence[3], "\n".join(fence[4])
+            fence, paragraph = None, []
+        else:
+            fence[4].append(line)
+    if fence is not None:
+        yield fence[2], fence[3], None
+
+
+def called_inputs(node):
+    """Yield the inputs that parsed YAML passes to python-ci.yml.
+
+    They are the keys of each with: next to a uses: that calls python-ci.yml, or
+    next to no uses: at all, as in a fragment that shows only the with: block.
+    The with: of a step that uses another action is not a call.
+    """
+    if isinstance(node, dict):
+        uses = node.get("uses")
+        calls = uses is None or CALLED_WORKFLOW.search(str(uses))
+        if calls and isinstance(node.get("with"), dict):
+            yield from map(str, node["with"])
+        for value in node.values():
+            yield from called_inputs(value)
+    elif isinstance(node, list):
+        for value in node:
+            yield from called_inputs(value)
+
+
+def snippet_input_problems(name, markdown, declared, unreleased):
+    """List the inputs a Markdown file's YAML examples pass that a release lacks.
+
+    GitHub rejects a call that passes an input the called workflow does not declare
+    before any job starts, so a caller's pinned release rejects an input that is
+    only on main, unless the example says so.
+    """
+    problems = []
+    for line, paragraph, text in yaml_blocks(markdown):
+        if text is None:
+            problems.append(f"{name} line {line}: the code block has no closing fence")
+            continue
+        try:
+            document = yaml.safe_load(text)
+        except yaml.YAMLError as error:
+            problems.append(
+                f"{name} line {line}: the YAML block does not parse: {error}"
+            )
+            continue
+        for key in called_inputs(document):
+            if key not in declared:
+                problems.append(
+                    f"{name} line {line}: the example passes {key}, which "
+                    "python-ci.yml does not declare"
+                )
+            elif key in unreleased and "Unreleased" not in paragraph:
+                problems.append(
+                    f"{name} line {line}: the example passes {key}, whose Added in is "
+                    "Unreleased, but the paragraph before it does not say Unreleased"
+                )
+    return problems
+
+
+@unittest.skipUnless(yaml, "needs PyYAML")
+class DocumentationSnippetTests(unittest.TestCase):
+    """Examples are copied into callers that pin a release, not main."""
+
+    DECLARED = frozenset({"python-versions", "released-thing", "new-thing"})
+    UNRELEASED = frozenset({"new-thing"})
+    CALL = (
+        "```yaml\njobs:\n  python:\n    uses: owner/repo/.github/workflows/"
+        "python-ci.yml@0123456789abcdef0123456789abcdef01234567 # v1.1.0\n"
+        "    with:\n      python-versions: '[\"3.13\"]'\n      {input}: true\n```\n"
+    )
+
+    def problems(self, markdown):
+        return snippet_input_problems(
+            "DOC.md", markdown, self.DECLARED, self.UNRELEASED
+        )
+
+    def test_the_readme_and_docs_examples_pass_only_released_inputs(self):
+        script = importlib.util.spec_from_file_location(
+            "inputs_table", ROOT / ".github/scripts/inputs_table.py"
+        )
+        assert script and script.loader
+        inputs_table = importlib.util.module_from_spec(script)
+        script.loader.exec_module(inputs_table)
+        cells = inputs_table.expected_cells(
+            WORKFLOW.read_text(encoding="utf-8"),
+            (ROOT / "CHANGELOG.md").read_text(encoding="utf-8"),
+        )
+        unreleased = {name for name, cell in cells.items() if cell[2] == "Unreleased"}
+        documents = [ROOT / "README.md", *sorted((ROOT / "docs").glob("*.md"))]
+        found = set()
+        for path in documents:
+            markdown = path.read_text(encoding="utf-8")
+            name = path.relative_to(ROOT).as_posix()
+            with self.subTest(document=name):
+                self.assertEqual(
+                    snippet_input_problems(name, markdown, set(cells), unreleased), []
+                )
+            for _, _, text in yaml_blocks(markdown):
+                found.update(called_inputs(yaml.safe_load(text or "")))
+        # Full calls and bare with: fragments count; the download step's with: does not.
+        self.assertLessEqual({"coverage-fail-under", "matrix-exclude"}, found)
+        self.assertIn("upload-dist", found)
+        self.assertNotIn("path", found)
+
+    def test_an_undeclared_input_fails(self):
+        self.assertEqual(self.problems(self.CALL.format(input="released-thing")), [])
+        (problem,) = self.problems(self.CALL.format(input="no-such-input"))
+        self.assertEqual(
+            problem,
+            "DOC.md line 1: the example passes no-such-input, which python-ci.yml "
+            "does not declare",
+        )
+
+    def test_an_unreleased_input_needs_a_note_in_the_paragraph_before(self):
+        call = self.CALL.format(input="new-thing")
+        for before, failures in (
+            ("Unreleased: `new-thing` is on main only.\n\n", 0),
+            ("Run it\nwith `new-thing`, which is Unreleased:\n", 0),
+            ("Run it with `new-thing`:\n\n", 1),
+            # Only the paragraph directly before the block counts.
+            ("`new-thing` is Unreleased.\n\nRun it:\n\n", 1),
+            ("Unreleased:\n\n```sh\ntrue\n```\n\n", 1),
+        ):
+            with self.subTest(before=before):
+                problems = self.problems(before + call)
+                self.assertEqual(len(problems), failures, problems)
+                for problem in problems:
+                    self.assertIn(
+                        "passes new-thing, whose Added in is Unreleased", problem
+                    )
+
+    def test_indented_with_fragments_count_and_other_actions_do_not(self):
+        fragment = (
+            "Trim the matrix:\n\n```yaml\n    with:\n"
+            "      python-versions: '[\"3.13\"]'\n      no-such-input: >-\n"
+            '        [{"os": "windows-latest"}]\n```\n'
+        )
+        (problem,) = self.problems(fragment)
+        self.assertEqual(
+            problem,
+            "DOC.md line 3: the example passes no-such-input, which python-ci.yml "
+            "does not declare",
+        )
+        # A fence indented inside a list item is a block too.
+        (problem,) = self.problems(
+            "- Trim it:\n\n  ```yml\n  with:\n    new-thing: 1\n  ```\n"
+        )
+        self.assertIn("passes new-thing, whose Added in is Unreleased", problem)
+        other = (
+            "```yaml\njobs:\n  python:\n    uses: ./.github/workflows/python-ci.yml\n"
+            "  publish:\n    steps:\n      - uses: actions/download-artifact@v8\n"
+            "        with:\n          name: dist\n  other:\n"
+            "    uses: owner/repo/.github/workflows/python-ci.yml.bak@v1\n"
+            "    with:\n      anything: 1\n```\n\n"
+            "~~~sh\n```yaml\nwith:\n  no-such-input: 1\n```\n~~~\n"
+        )
+        self.assertEqual(self.problems(other), [])
+
+    def test_a_yaml_block_that_does_not_parse_or_close_fails(self):
+        (problem,) = self.problems("Text.\n\n```yaml\nwith: [\n```\n")
+        self.assertTrue(
+            problem.startswith("DOC.md line 3: the YAML block does not parse"), problem
+        )
+        # A block that never closes would hide the blocks after it.
+        for language in ("yaml", "sh"):
+            with self.subTest(language=language):
+                (problem,) = self.problems(
+                    f"Text.\n\n```{language}\nwith:\n  no-such-input: 1\n"
+                )
+                self.assertEqual(
+                    problem, "DOC.md line 3: the code block has no closing fence"
+                )

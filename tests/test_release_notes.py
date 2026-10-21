@@ -4,10 +4,12 @@ import collections
 import importlib.util
 import os
 import re
+import shutil
 import subprocess
 import sys
 import tempfile
 import unittest
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 try:
@@ -16,10 +18,21 @@ except ImportError:  # pragma: no cover - requirements-dev.txt installs PyYAML
     yaml = None  # type: ignore[assignment]
 
 SCRIPT = Path(__file__).parents[1] / ".github/scripts/release_notes.py"
-spec = importlib.util.spec_from_file_location("release_notes", SCRIPT)
-assert spec and spec.loader
-release_notes = importlib.util.module_from_spec(spec)
-spec.loader.exec_module(release_notes)
+CADENCE = SCRIPT.with_name("release_cadence.py")
+
+
+def load_script(path):
+    """Import a script by its file name, as the scripts import each other."""
+    spec = importlib.util.spec_from_file_location(path.stem, path)
+    assert spec and spec.loader
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[path.stem] = module
+    spec.loader.exec_module(module)
+    return module
+
+
+release_notes = load_script(SCRIPT)
+release_cadence = load_script(CADENCE)
 ROOT = SCRIPT.parents[2]
 UPGRADE_LINK = re.compile(r"\]\((?:\./)?UPGRADING\.md#([^)\s]*)\)")
 COMMIT = "0123456789abcdef" * 2 + "01234567"
@@ -646,6 +659,250 @@ class UpgradeGuideTests(unittest.TestCase):
         self.assertIn("from-v1-to-v2", github_anchors(upgrading))
         changelog = (ROOT / "CHANGELOG.md").read_text(encoding="utf-8")
         self.assertEqual(upgrade_link_problems(changelog, upgrading), [])
+
+
+class ReleaseCadenceTests(unittest.TestCase):
+    NOW = datetime(2026, 10, 21, 12, 0, tzinfo=UTC)
+
+    def version(self, commit, age, security="", added=""):
+        """Return CHANGELOG.md as a commit made age before NOW left it.
+
+        The released section's Security entry is not pending, so it never counts.
+        """
+        return release_cadence.Version(
+            commit,
+            self.NOW - age,
+            f"# Changelog\n\n## [Unreleased]\n\n### Added\n\n{added}\n"
+            f"### Security\n\n{security}\n### Changed defaults\n\n"
+            "## [1.0.0] - 2026-09-01\n\n### Security\n\n- Released fix.\n",
+        )
+
+    def test_a_fix_listed_more_than_seven_days_ago_is_overdue(self):
+        for age in (timedelta(days=7, minutes=1), timedelta(days=20)):
+            with self.subTest(age=age):
+                # Rewording the pending fix a day ago does not restart its clock.
+                versions = [
+                    self.version(
+                        "ccc",
+                        timedelta(days=1),
+                        "- Fixed `a`,\n  which leaked.\n- Fixed `b`.\n",
+                    ),
+                    self.version("bbb", age, "- Fixed `a`.\n"),
+                    self.version("aaa", timedelta(days=60)),
+                ]
+                (problem,) = release_cadence.overdue(versions, self.NOW)
+                self.assertEqual(
+                    problem,
+                    "'## [Unreleased]' has listed a fix under Security since commit "
+                    f"bbb on {self.NOW - age:%Y-%m-%d}, more than 7 days ago. "
+                    "SECURITY.md promises a release within 7 days of merging; open a "
+                    "release pull request. Pending: '- Fixed `a`,'; '- Fixed `b`.'",
+                )
+
+    def test_a_fix_inside_the_window_passes(self):
+        for age in (timedelta(0), timedelta(days=3), timedelta(days=7)):
+            with self.subTest(age=age):
+                versions = [
+                    self.version("bbb", age, "- Fixed `a`.\n"),
+                    self.version("aaa", timedelta(days=60)),
+                ]
+                self.assertEqual(release_cadence.overdue(versions, self.NOW), [])
+
+        # A release empties Unreleased: the fix it shipped no longer counts, and the
+        # check reads no further back. Entries listed before the pending fix do not
+        # date it either.
+        def versions():
+            yield self.version("ddd", timedelta(days=1), "- Fixed `b`.\n", "- New.\n")
+            yield self.version("ccc", timedelta(days=10), added="- New.\n")
+            yield self.version("bbb", timedelta(days=30))
+            raise AssertionError("read past the release")
+
+        self.assertEqual(release_cadence.overdue(versions(), self.NOW), [])
+
+    def test_an_empty_or_missing_security_subsection_has_nothing_to_date(self):
+        for changelog in (
+            self.version("aaa", timedelta(0), added="- New.\n").changelog,
+            (
+                "## [Unreleased]\n\n### Added\n\n- New.\n\n"
+                "## [1.0.0]\n\n### Security\n\n- Released fix.\n"
+            ),
+            "",
+        ):
+            with self.subTest(changelog=changelog):
+                self.assertEqual(release_cadence.pending_security_fixes(changelog), [])
+                versions = [
+                    release_cadence.Version(
+                        "aaa", self.NOW - timedelta(days=20), changelog
+                    )
+                ]
+                self.assertEqual(release_cadence.overdue(versions, self.NOW), [])
+
+    def test_unreleased_entries_wait_at_most_four_weeks(self):
+        for age, failures in (
+            (timedelta(weeks=4), 0),
+            (timedelta(weeks=4, minutes=1), 1),
+        ):
+            with self.subTest(age=age):
+                versions = [
+                    self.version("ccc", timedelta(days=1), added="- New.\n- Newer.\n"),
+                    self.version("bbb", age, added="- New.\n"),
+                    self.version("aaa", timedelta(days=60)),
+                ]
+                problems = release_cadence.overdue(versions, self.NOW)
+                self.assertEqual(len(problems), failures, problems)
+        (problem,) = problems
+        self.assertEqual(
+            problem,
+            "'## [Unreleased]' has had entries since commit bbb on 2026-09-23, more "
+            "than 4 weeks ago. CONTRIBUTING allows at most 4 weeks between releases "
+            "while it has entries; open a release pull request",
+        )
+
+    def repository(self):
+        """Return a new repository and functions that commit and check it.
+
+        commit(security, days_ago, added, released) commits a CHANGELOG.md with those
+        Unreleased Security and Added entries and released sections, as of days_ago.
+        """
+        if shutil.which("git") is None:
+            self.skipTest("needs git")
+        work = tempfile.TemporaryDirectory()
+        self.addCleanup(work.cleanup)
+        root = Path(work.name, "repository")
+        root.mkdir()
+        # Leave out the user's and the system's git configuration.
+        Path(work.name, "gitconfig").write_text("", encoding="utf-8")
+        env = {
+            **{key: value for key, value in os.environ.items() if key[:4] != "GIT_"},
+            "GIT_CONFIG_NOSYSTEM": "1",
+            "GIT_CONFIG_GLOBAL": str(Path(work.name, "gitconfig")),
+            "GIT_AUTHOR_NAME": "Test",
+            "GIT_AUTHOR_EMAIL": "test@example.com",
+            "GIT_COMMITTER_NAME": "Test",
+            "GIT_COMMITTER_EMAIL": "test@example.com",
+        }
+        now = datetime.now(UTC)
+
+        def git(*args, days_ago=0):
+            date = f"{int((now - timedelta(days=days_ago)).timestamp())} +0000"
+            dated = {**env, "GIT_AUTHOR_DATE": date, "GIT_COMMITTER_DATE": date}
+            return subprocess.run(
+                ["git", *args],
+                cwd=root,
+                env=dated,
+                text=True,
+                capture_output=True,
+                check=True,
+            ).stdout
+
+        def commit(security, days_ago, added="", released=""):
+            (root / "CHANGELOG.md").write_text(
+                f"## [Unreleased]\n\n### Added\n\n{added}\n"
+                f"### Security\n\n{security}\n{released}",
+                encoding="utf-8",
+            )
+            git("add", "CHANGELOG.md")
+            git("commit", "-q", "-m", "Change", days_ago=days_ago)
+
+        def run(cwd=root):
+            return subprocess.run(
+                [sys.executable, str(CADENCE)],
+                cwd=cwd,
+                env=env,
+                text=True,
+                capture_output=True,
+                check=False,
+            )
+
+        git("init", "-q", "-b", "main")
+        return root, git, commit, run
+
+    def test_the_script_dates_a_pull_request_by_its_merge(self):
+        root, git, commit, run = self.repository()
+        commit("", days_ago=40)
+        git("checkout", "-q", "-b", "fix")
+        commit("- Fixed `a`.\n", days_ago=9)
+        git("checkout", "-q", "main")
+        (root / "other.txt").write_text("Other.\n", encoding="utf-8")
+        git("add", "other.txt")
+        git("commit", "-q", "-m", "Other", days_ago=5)
+        # The merge leaves CHANGELOG.md as the branch's commit 9 days ago did, but
+        # the fix reached main 2 days ago.
+        git("merge", "-q", "--no-ff", "-m", "Merge fix", "fix", days_ago=2)
+        result = run()
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn("No release is overdue", result.stdout)
+
+    def test_the_script_dates_the_pending_entries_until_a_release(self):
+        root, git, commit, run = self.repository()
+
+        def since():
+            """Return how the check names the newest commit."""
+            sha, date = git("log", "-1", "--format=%H %cI").split()
+            return f"since commit {sha[:7]} on {date[:10]}, more than"
+
+        commit("", days_ago=60)
+        commit("", days_ago=40, added="- New.\n")
+        entries_since = since()
+        commit("- Fixed `b`, whch\n  leaked.\n", days_ago=10, added="- New.\n")
+        fix_since = since()
+        result = run()
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        fix, entries = result.stdout.splitlines()
+        self.assertTrue(
+            fix.startswith(
+                "::error file=CHANGELOG.md::'## [Unreleased]' has listed a fix under "
+                f"Security {fix_since} 7 days ago."
+            ),
+            fix,
+        )
+        self.assertTrue(fix.endswith("Pending: '- Fixed `b`, whch'"), fix)
+        self.assertIn(f"has had entries {entries_since} 4 weeks ago.", entries)
+        # Fixing a typo in the fix's first line a day ago keeps its date.
+        commit("- Fixed `b`, which\n  leaked.\n", days_ago=1, added="- New.\n")
+        result = run()
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertEqual(
+            result.stdout.splitlines(), [fix.replace("whch", "which"), entries]
+        )
+        # A shallow clone may lack the commit that listed the fix.
+        shallow = root.with_name("shallow")
+        git("clone", "-q", "--depth", "1", root.as_uri(), str(shallow))
+        result = run(cwd=shallow)
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertIn("fetch-depth: 0", result.stderr)
+        # The release moves the entries out of Unreleased.
+        released = (root / "CHANGELOG.md").read_text(encoding="utf-8")
+        commit("", days_ago=0, released=released.replace("[Unreleased]", "[1.0.1]"))
+        result = run()
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn("No release is overdue", result.stdout)
+
+    def test_the_policy_names_the_windows_the_check_enforces(self):
+        def text(name):
+            return " ".join((ROOT / name).read_text(encoding="utf-8").split())
+
+        days = release_cadence.DAYS
+        self.assertIn(f"released within {days} days of merging", text("SECURITY.md"))
+        releases = " ".join(
+            re.search(
+                r"(?ms)^## Releases\n(.*?)^## ",
+                (ROOT / "CONTRIBUTING.md").read_text(encoding="utf-8"),
+            )
+            .group(1)
+            .split()
+        )
+        # The documents spell the weeks out.
+        self.assertEqual(release_cadence.WEEKS, 4)
+        self.assertIn(
+            "between releases while `## [Unreleased]` has entries is four weeks",
+            releases,
+        )
+        self.assertIn("release pull request", releases)
+        self.assertIn(
+            f"more than four weeks old or the second more than {days} days", releases
+        )
+        self.assertIn("at most four weeks pass between releases", text("README.md"))
 
 
 class ReleaseOrderTests(unittest.TestCase):

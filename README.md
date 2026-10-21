@@ -147,6 +147,8 @@ long a previous major version receives security fixes.
 All inputs are optional. Paths are relative to `working-directory` and must stay
 inside the checkout. JSON arrays and objects are passed as strings. "Added in" names the release
 that introduced the input; Unreleased means it is on `main` but not in a release yet.
+The examples in this README pass only inputs that are in a release, unless the
+paragraph before an example says Unreleased.
 
 ### Matrix and job
 
@@ -516,6 +518,9 @@ against and how to report a vulnerability.
   released at least 30 days earlier: GitHub stops queueing jobs on a self-hosted
   runner that has left an update uninstalled for 30 days, so no runner it still
   serves is left out.
+- **Release cadence.** A fix listed under "Security" in CHANGELOG.md is released
+  within 7 days of merging (see [SECURITY.md](SECURITY.md)), and while CHANGELOG.md
+  lists unreleased changes, at most four weeks pass between releases.
 - **v2.0.0** carries the default changes scheduled so far: `test-runner`,
   `test-directory`, `test-pattern`, `lint-paths`, coverage that honours the
   project's own `source` and `fail_under` settings, and Python 3.15 in
