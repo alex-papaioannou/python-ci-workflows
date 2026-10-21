@@ -31,6 +31,8 @@ even when no caller's run would fail.
   `env:` blocks, and no step before `Validate inputs` runs code from the caller's
   repository.
 - `require-hashes` defaults to `true`.
+- setup-python's `cache` input is empty in a call with `upload-dist`, and
+  `python-ci.yml` declares no `cache-mode` at any level.
 
 `alex-papaioannou/python-ci-workflows` is the permanent path: the repository will not
 be renamed or transferred, because every caller's `uses:` line names it.

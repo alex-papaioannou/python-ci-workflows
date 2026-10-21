@@ -167,8 +167,8 @@ inside the checkout. JSON arrays are passed as strings.
 
 | Input | Type | Default | Description |
 | --- | --- | --- | --- |
-| `requirements-file` | string | `""` | Locked dependencies installed before checks. With the pip installer, pip's download cache is saved between runs, keyed on this file. A requirements `.txt` works with either installer. It may also be a `uv.lock` (exported with `project-extras` and the default groups) or a `pylock.toml` (or `pylock.<name>.toml`), which are always installed with uv. |
-| `install-project` | boolean | `false` | `pip install --editable .` after requirements. With a `requirements-file`, dependencies are assumed locked and installed with `--no-deps`. pip's download cache is keyed on `pyproject.toml` when there is no `requirements-file`. |
+| `requirements-file` | string | `""` | Locked dependencies installed before checks. With the pip installer, pip's download cache is saved between runs, keyed on this file, except in a call with `upload-dist`. A requirements `.txt` works with either installer. It may also be a `uv.lock` (exported with `project-extras` and the default groups) or a `pylock.toml` (or `pylock.<name>.toml`), which are always installed with uv. |
+| `install-project` | boolean | `false` | `pip install --editable .` after requirements. With a `requirements-file`, dependencies are assumed locked and installed with `--no-deps`. pip's download cache is keyed on `pyproject.toml` when there is no `requirements-file`, except in a call with `upload-dist`. |
 | `project-extras` | string | `""` | Comma-separated extras installed with the project, such as `test,dev`. |
 | `installer` | string | `pip` | `pip` or `uv`. uv installs into the same interpreter and is much faster on large dependency sets. uv's own cache is not saved between runs. A `uv.lock` or `pylock.toml` `requirements-file` is always installed with uv, the only installer that reads them, so `installer` has no effect with those files, even when set to `pip`. The validation step logs the installer and why it was chosen, and adds that line to the job summary when `requirements-file` or `install-project` is set. |
 | `uv-version` | string | `0.13.4` | uv version used when installing with uv: with `installer: uv`, or a `uv.lock` or `pylock.toml` `requirements-file`. |
@@ -217,7 +217,7 @@ inside the checkout. JSON arrays are passed as strings.
 | `coverage-fail-under` | number | `0` | Fail when total coverage is below this percentage. |
 | `test-wheel` | boolean | `false` | Once per run on the primary cell, as part of the build, install the wheel in a fresh virtual environment and run only a copy of the tests against it. With a `requirements-file` (a `.txt`, `uv.lock` or `pylock.toml`), the locked dependencies are installed first, the same way as for the main tests (same installer, hash-checked unless `require-hashes` is false), then the wheel with `--no-deps`, replacing any copy of the project the lock installed, and the wheel's own requirements must be satisfied by the lock. Without one, the wheel and its `project-extras` resolve normally. pytest is `pytest-version` either way. This catches files missing from the wheel and broken package discovery, but not a packaging problem that shows only on another cell's operating system or Python version. Requires `build-package`. |
 | `build-package` | boolean | `false` | Build an sdist and wheel and run `twine check --strict`, once per run on the primary cell. Requires `pyproject.toml`. Nothing is published. |
-| `upload-dist` | boolean | `false` | After a successful build (and wheel tests, when enabled), upload the files as the `dist` artifact, plus the call suffix, for a publish job in your own workflow. Requires `build-package`. |
+| `upload-dist` | boolean | `false` | After a successful build (and wheel tests, when enabled), upload the files as the `dist` artifact, plus the call suffix, for a publish job in your own workflow. setup-python restores and saves no pip cache in that call, on any matrix cell; see [Publishing to PyPI](#publishing-to-pypi). Requires `build-package`. |
 
 ### Trimming the matrix
 
@@ -265,6 +265,20 @@ jobs:
           path: dist
       - uses: pypa/gh-action-pypi-publish@7245906fb61fa33a13554f9d5fb856fe61758086 # v1.14.3
 ```
+
+In a call with `upload-dist`, setup-python restores and saves no pip cache, on any of
+its matrix cells. The build installs build and twine by version and your build
+backend from `[build-system] requires`, all without hashes, and a tag-push run could
+otherwise restore a cache saved by any workflow on the default branch, including one
+that handles untrusted input. To keep the cache on runs that do not publish, set
+`upload-dist: ${{ startsWith(github.ref, 'refs/tags/v') }}` so only tag runs upload,
+or call the workflow twice: once for CI and once with `upload-dist`, giving the CI
+call a `call-name` so the other call's artifact keeps the name `dist` (see
+[Calling the workflow more than once](#calling-the-workflow-more-than-once)). A
+self-hosted runner that is not ephemeral keeps pip's and uv's own caches between
+jobs, so run a call with `upload-dist` on GitHub-hosted or ephemeral runners. A
+`cache-mode` you set on the calling job limits that call's cache access; the workflow
+declares none of its own, so it never asks for more and always starts.
 
 ### Calling the workflow more than once
 
@@ -350,7 +364,8 @@ where noted.
 
 1. Check out the caller's repository without persisting credentials.
 2. Set up Python, with pip's download cache when `requirements-file` or
-   `install-project` is set. uv's own cache is not saved between runs.
+   `install-project` is set and `upload-dist` is not. uv's own cache is not saved
+   between runs.
 3. Validate inputs: paths, JSON arrays, versions, globs and regexes. Choose the test
    runner for `test-runner: auto`, and uv as the installer for a `uv.lock` or
    `pylock.toml`. Bad configuration fails here, before any project code runs.
@@ -391,6 +406,8 @@ self-hosted runner on version 2.336.0 or newer.
   contains a `${{ }}` expression. No project code runs before the `Validate inputs`
   step.
 - `requirements-file` installs are hash-checked by default (`require-hashes`).
+- In a call with `upload-dist`, setup-python restores and saves no pip cache. The
+  workflow declares no `cache-mode`, so it runs under the one your calling job sets.
 
 `tests/test_security_posture.py` checks each of these, and weakening one is a
 breaking change. [SECURITY.md](SECURITY.md) says what the workflow does not protect
