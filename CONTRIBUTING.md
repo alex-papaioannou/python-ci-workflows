@@ -14,6 +14,27 @@
 - Every input needs a `description` and a row in the README inputs table. The test
   suite checks this.
 
+## Design rules
+
+These rules are the workflow's [security posture](README.md#security-posture), and
+`tests/test_security_posture.py` checks them. Weakening one is a breaking change,
+even when no caller's run would fail.
+
+- Pin third-party actions in `python-ci.yml` and `action.yml` to a full commit SHA,
+  and load the step scripts only through the same-repository `$/` reference.
+- `python-ci.yml` requests `permissions: contents: read` at the top level, and no job
+  widens it.
+- Neither `python-ci.yml` nor `action.yml` references `secrets` or `github.token`,
+  and `python-ci.yml` declares no secrets.
+- Every checkout sets `persist-credentials: false`.
+- No `run:` script contains a `${{ }}` expression. Inputs reach `steps.py` through
+  `env:` blocks, and no step before `Validate inputs` runs code from the caller's
+  repository.
+- `require-hashes` defaults to `true`.
+
+`alex-papaioannou/python-ci-workflows` is the permanent path: the repository will not
+be renamed or transferred, because every caller's `uses:` line names it.
+
 ## Local checks
 
 ```sh
@@ -51,15 +72,16 @@ against any of them fails the smoke test, and blocks releases, until the lock mo
 Releases follow semantic versioning and the README's
 [support policy](README.md#support-policy). A breaking change, which needs a new
 major version, is removing or renaming an input or output, changing an input's type,
-its default or what that default does, or any other change that can fail an existing
-caller's run. Adding a Python version to the default `python-versions`, or removing
-one, changes a default. A minor release may still ship three kinds of change that
-can fail a run: a security fix that moves a tool version default, listed under
-Security, which may also ship in a patch release; a new version of something the
-workflow pins without an input (build, twine and the pinned actions), listed under
-Changed defaults, which may raise the self-hosted runner floor as the support policy
-describes; and a fix that makes the workflow report a failure it used to hide,
-listed under Behaviour changes, unless the fix changes a default or what it does.
+its default or what that default does, weakening one of the design rules above, or
+any other change that can fail an existing caller's run. Adding a Python version to
+the default `python-versions`, or removing one, changes a default. A minor release
+may still ship three kinds of change that can fail a run: a security fix that moves a
+tool version default, listed under Security, which may also ship in a patch release;
+a new version of something the workflow pins without an input (build, twine and the
+pinned actions), listed under Changed defaults, which may raise the self-hosted
+runner floor as the support policy describes; and a fix that makes the workflow
+report a failure it used to hide, listed under Behaviour changes, unless the fix
+changes a default or what it does.
 
 A deprecated input stays declared until the next major version. When a call sets it
 to anything but its default, the `Validate inputs` step prints a `::warning::` that

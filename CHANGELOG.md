@@ -17,6 +17,14 @@ major tag such as `v1`, an exact release, or a commit SHA.
   release, and how long a previous major version receives security fixes.
   CONTRIBUTING's definition of a breaking change and SECURITY.md's supported
   versions match it.
+- A security posture section in the README, with the same guarantees as design rules
+  in CONTRIBUTING: actions pinned to commit SHAs, only `contents: read`, no secrets
+  or `github.token`, checkout without persisted credentials, no `${{ }}` expression
+  in a `run:` script, inputs validated before any project code runs, and
+  hash-checked requirements by default. The test suite checks each one, and
+  weakening one is a breaking change. Both documents also state that
+  `alex-papaioannou/python-ci-workflows` is the permanent path and will not be
+  renamed or transferred.
 
 ### Changed
 

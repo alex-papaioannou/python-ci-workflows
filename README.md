@@ -2,8 +2,9 @@
 
 A reusable GitHub Actions workflow for Python projects. By default it checks syntax,
 discovers and runs `unittest` or pytest tests, rejects empty test suites, and runs on Python
-3.11 through 3.14. It needs no secrets. Dependency installation, linting, type
-checking, coverage and package builds are all optional.
+3.11 through 3.14. It needs no secrets; see [Security posture](#security-posture).
+Dependency installation, linting, type checking, coverage and package builds are all
+optional.
 
 ## Quick start
 
@@ -60,6 +61,10 @@ builds are easy to tell apart.
 - `@v1.2.3` or a full commit SHA never changes. A SHA is the most tamper-resistant
   choice, and Dependabot can keep it current.
 - `@main` gets unreleased changes and is not recommended for consumers.
+
+`alex-papaioannou/python-ci-workflows` is the permanent path: the repository will not
+be renamed or transferred, because every caller's `uses:` line names it and a move
+would break those calls.
 
 Checkout runs in the calling repository. Public consumers need this repository to be
 public.
@@ -269,6 +274,24 @@ explicitly. The step scripts are fetched at the same commit as the workflow, wit
 checking out anything into your workspace. This needs a GitHub-hosted runner, or a
 self-hosted runner on version 2.336.0 or newer.
 
+## Security posture
+
+- Third-party actions are pinned to a full commit SHA, and the step scripts load from
+  this repository at the commit of the workflow.
+- Jobs request only `permissions: contents: read`, and no job widens it.
+- No secrets: the workflow references neither `secrets` nor `github.token`, and
+  declares no secrets for a caller to pass.
+- Checkout runs with `persist-credentials: false`, so no token is left in the Git
+  configuration for project code to read.
+- Inputs reach the step scripts only through environment variables: no `run:` script
+  contains a `${{ }}` expression. No project code runs before the `Validate inputs`
+  step.
+- `requirements-file` installs are hash-checked by default (`require-hashes`).
+
+`tests/test_security_posture.py` checks each of these, and weakening one is a
+breaking change. [SECURITY.md](SECURITY.md) says what the workflow does not protect
+against and how to report a vulnerability.
+
 ## Support policy
 
 - **Platforms.** github.com and GitHub Enterprise Cloud are supported. GitHub
@@ -321,8 +344,9 @@ self-hosted runner on version 2.336.0 or newer.
   next major release. When a call sets it to anything but its default, the
   "Validate inputs" step prints a `::warning::` that names its replacement.
 - **Breaking changes** need a new major version: removing or renaming an input or
-  output, changing an input's type or default, and any other change that can fail
-  an existing caller's run, other than the security fixes, pinned tool and action
+  output, changing an input's type or default, weakening the
+  [security posture](#security-posture), and any other change that can fail an
+  existing caller's run, other than the security fixes, pinned tool and action
   updates and hidden-failure fixes above.
 - **Previous major versions.** v1 receives no releases after v2.0.0. From v2 on,
   when a new major version is released, the previous major version receives
