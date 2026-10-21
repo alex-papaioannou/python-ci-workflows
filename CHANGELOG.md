@@ -51,6 +51,16 @@ major tag such as `v1`, an exact release, or a commit SHA.
   input leaves it off; on the other cells the audit, Ruff and the build read
   "skipped (runs on the primary cell)". The table is written whenever validation
   ran, even after a failure.
+- A public interface section in CONTRIBUTING lists the names callers depend on: the
+  workflow's path, the inputs with their types and defaults, the outputs, the
+  `result` job's id and name, which the required `<caller job> / result` check
+  matches, the artifact names `dist`, `junit-<os>-<python>` and
+  `coverage-<os>-<python>` with the call suffix, and the primary-cell rule. Changing
+  any of them is a breaking change; log text, the job summary layout, step names and
+  the matrix test job names may change in any release. The README says the same to
+  callers and lists the outputs in a table. The test suite pins the `result` job's
+  id and name and each artifact name, and checks that the README documents every
+  output.
 
 ### Changed
 
