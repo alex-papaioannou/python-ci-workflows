@@ -1382,6 +1382,104 @@ def start_coverage():
     return cov
 
 
+def tool_versions(*tools: tuple[str, str]) -> str:
+    """Name each tool with its version, leaving out tools without one."""
+    return ", ".join(f"{name} {version}" for name, version in tools if version)
+
+
+def checks() -> int:
+    """Summarise the outcome of every check of this matrix cell.
+
+    The tests run even after a lint, type, syntax or build check fails, so this
+    table is what records which check failed. A step whose input leaves it off is
+    "not enabled" rather than skipped. The step never fails the job itself.
+    """
+    runner = env("TEST_RUNNER")
+    uv_version = env("UV_VERSION") if env("INSTALLER") == "uv" else ""
+    pytest_version = env("PYTEST_VERSION") if runner == "pytest" else ""
+    test_tools = tool_versions(
+        ("pytest", pytest_version), ("coverage", env("COVERAGE_VERSION"))
+    )
+    # Each row: step name, outcome, whether its input enables it, whether it runs
+    # on the primary cell only, and the tool versions the caller asked for.
+    rows = [
+        ("Validate inputs", env("VALIDATE_OUTCOME"), True, False, ""),
+        (
+            "Install dependencies",
+            env("INSTALL_OUTCOME"),
+            bool(env("REQUIREMENTS_FILE")) or flag("INSTALL_PROJECT"),
+            False,
+            tool_versions(("uv", uv_version)),
+        ),
+        (
+            "Audit dependencies",
+            env("AUDIT_OUTCOME"),
+            bool(env("AUDIT_VERSION")),
+            True,
+            tool_versions(("pip-audit", env("AUDIT_VERSION"))),
+        ),
+        (
+            "Lint with Ruff",
+            env("RUFF_OUTCOME"),
+            bool(env("RUFF_VERSION")),
+            True,
+            tool_versions(("Ruff", env("RUFF_VERSION"))),
+        ),
+        (
+            "Type-check with mypy",
+            env("MYPY_OUTCOME"),
+            bool(env("MYPY_VERSION")),
+            False,
+            tool_versions(("mypy", env("MYPY_VERSION"))),
+        ),
+        ("Check Python syntax", env("COMPILE_OUTCOME"), True, False, ""),
+        (
+            "Build and check package",
+            env("BUILD_OUTCOME"),
+            flag("BUILD_PACKAGE"),
+            True,
+            "",
+        ),
+        (
+            "Install test tools",
+            env("TEST_TOOLS_OUTCOME"),
+            # Without a resolved runner (validation failed), pytest may be needed.
+            bool(env("COVERAGE_VERSION")) or runner != "unittest",
+            False,
+            test_tools,
+        ),
+        (
+            "Run tests and reject empty test suites",
+            env("TEST_OUTCOME"),
+            True,
+            False,
+            test_tools,
+        ),
+    ]
+    lines = [
+        f"### Checks on Python {sys.version.split()[0]}{build_flavour()} ({sys.platform})",
+        "",
+        "| Check | Outcome | Version |",
+        "| --- | --- | --- |",
+    ]
+    for name, outcome, enabled, primary_only, versions in rows:
+        if outcome == "skipped" and not enabled:
+            outcome, versions = "not enabled", ""
+        elif outcome == "skipped" and primary_only and env("PRIMARY") == "false":
+            outcome = "skipped (runs on the primary cell)"
+        cells = (name, outcome or "not run", versions)
+        lines.append("| " + " | ".join(table_cell(cell) for cell in cells) + " |")
+    table = "\n".join(lines) + "\n"
+    if env("GITHUB_STEP_SUMMARY"):
+        with open(env("GITHUB_STEP_SUMMARY"), "a", encoding="utf-8") as summary:
+            summary.write(table + "\n")
+    # Versions are unchecked text after a failed validation; the Windows ANSI code
+    # page may not encode them.
+    sys.stdout.reconfigure(errors="replace")  # type: ignore[union-attr]
+    print(table)
+    return 0
+
+
 STEPS = {
     "validate": validate,
     "install": install,
@@ -1392,6 +1490,7 @@ STEPS = {
     "build": build,
     "install-test-tools": install_test_tools,
     "test": test,
+    "checks": checks,
 }
 
 if __name__ == "__main__":
