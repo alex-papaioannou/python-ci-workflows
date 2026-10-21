@@ -54,7 +54,8 @@ builds are easy to tell apart.
 
 ### Choosing a ref
 
-- `@v1` follows compatible releases of major version 1.
+- `@v1` follows compatible releases of major version 1. Breaking changes ship only in
+  a new major version, and [UPGRADING.md](UPGRADING.md) shows how to move to it.
 - `@v1.2.3` or a full commit SHA never changes. A SHA is the most tamper-resistant
   choice, and Dependabot can keep it current.
 - `@main` gets unreleased changes and is not recommended for consumers.

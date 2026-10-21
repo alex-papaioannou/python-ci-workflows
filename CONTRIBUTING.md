@@ -43,9 +43,17 @@ input or output, changing a default in a way that can fail existing callers, or
 dropping a supported Python version.
 
 Every pull request that changes behaviour adds a bullet under `## [Unreleased]` at
-the top of `CHANGELOG.md`, in one of these subsections: Added, Changed, Fixed,
-Security, Changed defaults, Behaviour changes. Changed defaults and Behaviour
-changes list anything that can make an existing caller's run behave differently.
+the top of `CHANGELOG.md`, in one of these subsections: Breaking changes, Added,
+Changed, Fixed, Security, Changed defaults, Behaviour changes. A breaking change as
+defined above goes under Breaking changes, even when it changes a default. Any entry
+there makes the next release a new major version, and each one needs an entry in
+[UPGRADING.md](UPGRADING.md) that shows the calling workflow before and after. That
+entry is a `###` heading under the section for the new major version, such as
+`## From v1 to v2`, and the bullet links to it, as in
+`[UPGRADING.md](UPGRADING.md#input-x-is-removed)`. The release notes point these
+links at UPGRADING.md in the released tag, so they also work on the release page.
+Changed defaults and Behaviour changes list the other changes that can make an
+existing caller's run behave differently.
 
 Releasing is automated. To release, open a pull request that renames
 `## [Unreleased]` to `## [X.Y.Z] - YYYY-MM-DD` and adds a fresh, empty
@@ -58,9 +66,17 @@ move the major tag (`vX`) to the same commit. Releases run only from `main`, in 
 The release job reads the first `## ` section after `## [Unreleased]`. That heading
 must be `## [X.Y.Z]` or `## [X.Y.Z] - YYYY-MM-DD` with plain ASCII numbers and no
 leading zeros, the section must contain more than empty subsection headings, and the
-version must not be lower than the newest existing release; otherwise the job fails.
-A heading that looks like a version but is not a level-two heading also fails. Older
-sections are not checked.
+version must not be lower than the newest existing release. Its major version must be
+higher than that of the newest earlier release exactly when the section has Breaking
+changes entries. Otherwise the job fails. A heading that looks like a version but is
+not a level-two heading also fails. Older sections are not checked. No new version
+can be released while `## [Unreleased]` has Breaking changes entries, including a
+pending version published by a manual run: the commit being released already
+contains those changes, so they belong in its section. The test suite applies the
+same major-version rule to the two newest release sections of `CHANGELOG.md`, and
+checks that each Breaking changes entry under `## [Unreleased]` and in the newest
+release links an existing UPGRADING.md heading, so a release pull request that gets
+either wrong fails before it merges.
 
 Only the commit that adds a version to `CHANGELOG.md` publishes it. If that Release
 run fails, re-run it: re-runs keep the original commit. A later push never publishes
