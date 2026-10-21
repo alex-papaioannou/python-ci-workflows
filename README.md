@@ -285,10 +285,10 @@ jobs:
       working-directory: services/web
 ```
 
-Uploaded artifacts are named after the matrix cell and the call, so calls never
-collide: `junit-<os>-<python>` and `coverage-<os>-<python>` gain `-<call-name>`, or
-otherwise `-<working-directory>` with `/` replaced by `-`. A single call with the
-default `working-directory: .` keeps the plain names.
+Uploaded artifacts are named after the call, and reports after the matrix cell too,
+so calls never collide: `dist`, `junit-<os>-<python>` and `coverage-<os>-<python>`
+gain `-<call-name>`, or otherwise `-<working-directory>` with `/` replaced by `-`. A
+single call with the default `working-directory: .` keeps the plain names.
 
 To serialize or cancel whole caller runs instead, set `concurrency:` on the caller
 workflow itself, for example
@@ -298,8 +298,10 @@ workflow itself, for example
 
 Ruff, pip-audit, the package build and the wheel test run once per call, on the
 primary cell: the first entry of `operating-systems` with the first entry of
-`python-versions` that is not in `experimental-python-versions`. Their failures
-therefore always fail the run. No other cell builds or tests the wheel.
+`python-versions` that is not in `experimental-python-versions`, so their failures
+fail the run. When every entry is experimental, the primary cell uses the first entry
+of `python-versions`, and no failure fails the run. No other cell builds or tests the
+wheel.
 The validation step warns when an experimental version is missing from
 `python-versions`, when every version is experimental, and when versions are given as
 JSON numbers (`3.10` as a number becomes `3.1`).
@@ -308,7 +310,13 @@ JSON numbers (`3.10` as a number becomes `3.1`).
 
 A final `result` job waits for the whole matrix and fails unless it succeeded. It runs no Python and checks nothing out, so `result-runner` can point it at any runner. In
 branch protection, require the single `<caller job> / result` check instead of
-listing every matrix job. The same value is exposed as the `result` output:
+listing every matrix job. The workflow's outputs:
+
+| Output | Description |
+| --- | --- |
+| `result` | The matrix result that the `result` check reports: `success`, `failure` or `cancelled`. |
+
+A job in the calling workflow reads them after the call:
 
 ```yaml
 jobs:
@@ -321,6 +329,13 @@ jobs:
     steps:
       - run: echo "CI finished with ${{ needs.python.outputs.result }}"
 ```
+
+The `<caller job> / result` check, the outputs and the artifact names `dist`,
+`junit-<os>-<python>` and `coverage-<os>-<python>`, each plus the call suffix, change
+only in a major release, so required checks and jobs that download the artifacts keep
+working. Step names, log text, the job summary layout and the names of the matrix
+test jobs may change in any release, so do not match on them.
+[CONTRIBUTING.md](CONTRIBUTING.md#public-interface) lists the whole public interface.
 
 Every test job also appends a pass, fail, error and skip table, the IDs of
 failing tests, and the ten slowest tests to the job summary, followed by the outcome
@@ -433,7 +448,9 @@ against and how to report a vulnerability.
   next major release. When a call sets it to anything but its default, the
   "Validate inputs" step prints a `::warning::` that names its replacement.
 - **Breaking changes** need a new major version: removing or renaming an input or
-  output, changing an input's type or default, weakening the
+  output, changing an input's type or default, changing the `result` check's name,
+  an artifact name or anything else in the
+  [public interface](CONTRIBUTING.md#public-interface), weakening the
   [security posture](#security-posture), and any other change that can fail an
   existing caller's run, other than the security fixes, pinned tool and action
   updates and hidden-failure fixes above.

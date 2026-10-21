@@ -81,6 +81,30 @@ def input_readers(name):
     return readers
 
 
+def markdown_section(name, title):
+    """Return the body of a level-two section of a repository Markdown file."""
+    text = (ROOT / name).read_text(encoding="utf-8")
+    section = re.search(rf"(?ms)^## {re.escape(title)}\n(.*?)^## ", text)
+    if section is None:
+        raise AssertionError(f"{name} has no '## {title}' section")
+    return section.group(1)
+
+
+# Callers download artifacts by name, so these are public interface. Each upload
+# step's name is the documented name, with the matrix cell for <os>-<python>, plus
+# the call suffix.
+ARTIFACT_NAMES = ("dist", "junit-<os>-<python>", "coverage-<os>-<python>")
+MATRIX_CELL = (
+    "${{ steps.validate.outputs.os-slug || matrix.os }}-${{ matrix.python-version }}"
+)
+CALL_SUFFIX = "${{ steps.validate.outputs.artifact-suffix }}"
+
+
+def artifact_template(name):
+    """Return the upload step's artifact name template for a documented name."""
+    return name.replace("<os>-<python>", MATRIX_CELL) + CALL_SUFFIX
+
+
 class StepHarness:
     def run_step(self, root, step, env=None, executable=sys.executable, cwd=None):
         """Run a step script with its own RUNNER_TEMP and system temp directory.
@@ -428,6 +452,8 @@ class WorkflowTests(StepHarness, unittest.TestCase):
             ({"WORKING_DIRECTORY": "./"}, ""),
             ({"WORKING_DIRECTORY": "examples/src-package"}, "-examples-src-package"),
             ({"WORKING_DIRECTORY": "./services/api/"}, "-services-api"),
+            # Spaces are kept, unlike in the runner part of the name.
+            ({"WORKING_DIRECTORY": "services\\web app"}, "-services-web app"),
             (
                 {"WORKING_DIRECTORY": "services/api", "CALL_NAME": "api-lint"},
                 "-api-lint",
@@ -438,15 +464,18 @@ class WorkflowTests(StepHarness, unittest.TestCase):
                 values, _ = self.validate_outputs(env)
                 self.assertEqual(values["artifact-suffix"], suffix)
 
-    def test_uploaded_artifact_names_use_the_suffix(self):
-        names = re.findall(
-            r"^          name: (.*)$", WORKFLOW.read_text(), re.MULTILINE
-        )
-        self.assertTrue(names)
-        for name in names:
-            self.assertTrue(
-                name.endswith("${{ steps.validate.outputs.artifact-suffix }}"), name
-            )
+    @unittest.skipUnless(yaml, "needs PyYAML")
+    def test_artifact_names_are_public_interface(self):
+        # Publish jobs and report tools download the artifacts by name, so changing
+        # a name is a breaking change. A new artifact joins ARTIFACT_NAMES and the
+        # list in CONTRIBUTING.md.
+        names = [
+            step.get("with", {}).get("name")
+            for job in yaml.safe_load(WORKFLOW.read_text())["jobs"].values()
+            for step in job.get("steps", [])
+            if step.get("uses", "").startswith("actions/upload-artifact")
+        ]
+        self.assertCountEqual(names, [artifact_template(n) for n in ARTIFACT_NAMES])
 
     def validate_outputs(self, env):
         with tempfile.TemporaryDirectory() as out:
@@ -481,6 +510,18 @@ class WorkflowTests(StepHarness, unittest.TestCase):
                 )
                 self.assertEqual(values["primary"], primary)
                 self.assertEqual(values["os-slug"], system)
+
+    def test_primary_cell_falls_back_when_every_version_is_experimental(self):
+        matrix = {
+            "PYTHON_VERSIONS": '["3.15", "3.14"]',
+            "EXPERIMENTAL_PYTHON_VERSIONS": '["3.14", "3.15"]',
+            "OPERATING_SYSTEMS": '["ubuntu-latest"]',
+            "MATRIX_OS": '"ubuntu-latest"',
+        }
+        for version, primary in (("3.15", "true"), ("3.14", "false")):
+            with self.subTest(version=version):
+                values, _ = self.validate_outputs({**matrix, "MATRIX_PYTHON": version})
+                self.assertEqual(values["primary"], primary)
 
     def test_runner_label_arrays_and_groups(self):
         cases = (
@@ -945,11 +986,20 @@ class WorkflowTests(StepHarness, unittest.TestCase):
         self.assertNotIn("uses", step)
         self.assertNotIn("shell", step)
 
-    def test_every_input_is_described_and_documented(self):
-        readme = (WORKFLOW.parents[2] / "README.md").read_text()
-        documented = set(re.findall(r"^\| `([a-z-]+)` \|", readme, re.MULTILINE))
+    @unittest.skipUnless(yaml, "needs PyYAML")
+    def test_result_check_keeps_its_job_id_and_name(self):
+        # Callers require "<caller job> / result" in branch protection, and a
+        # required check that no job reports any more stays pending.
+        jobs = yaml.safe_load(WORKFLOW.read_text())["jobs"]
+        self.assertIn("result", jobs)
+        self.assertEqual(jobs["result"].get("name"), "result")
+        # A matrix would add its values to the check name, as in "result (linux)".
+        self.assertNotIn("strategy", jobs["result"])
+
+    def declared(self, block):
+        """Return the inputs or outputs the workflow declares, each described."""
         lines = WORKFLOW.read_text().splitlines()
-        start = lines.index("    inputs:") + 1
+        start = lines.index(f"    {block}:", lines.index("  workflow_call:")) + 1
         declared = []
         for index, line in enumerate(lines[start:], start):
             if not line.startswith("      "):
@@ -959,15 +1009,53 @@ class WorkflowTests(StepHarness, unittest.TestCase):
                 self.assertTrue(
                     lines[index + 1].strip().startswith("description: "), line
                 )
-        self.assertEqual(set(declared), documented)
+        return set(declared)
+
+    def documented(self, title):
+        """Return the names in the first column of a README section's tables."""
+        section = markdown_section("README.md", title)
+        return set(re.findall(r"^\| `([a-z-]+)` \|", section, re.MULTILINE))
+
+    def test_every_input_is_described_and_documented(self):
+        self.assertEqual(self.declared("inputs"), self.documented("Inputs"))
+
+    def test_every_output_is_described_and_documented(self):
+        outputs = self.declared("outputs")
+        self.assertTrue(outputs)
+        self.assertEqual(outputs, self.documented("Outputs and required checks"))
+
+    def test_public_interface_is_documented(self):
+        # CONTRIBUTING.md lists what callers may depend on, and its Releases section
+        # makes changing any of it a breaking change. The README tells callers.
+        listed = [f"`{name}`" for name in (*ARTIFACT_NAMES, *self.declared("outputs"))]
+        listed += ["`<caller job> / result`", "call suffix"]
+        not_listed = (
+            "step names",
+            "log text",
+            "job summary layout",
+            "matrix test jobs",
+        )
+        bodies = {
+            name: " ".join(markdown_section(name, title).split()).lower()
+            for name, title in (
+                ("CONTRIBUTING.md", "Public interface"),
+                ("README.md", "Outputs and required checks"),
+            )
+        }
+        for name, body in bodies.items():
+            for phrase in (*listed, *not_listed):
+                with self.subTest(file=name, phrase=phrase):
+                    self.assertIn(phrase, body)
+        self.assertIn("primary-cell rule", bodies["CONTRIBUTING.md"])
+        self.assertIn("`.github/workflows/python-ci.yml`", bodies["CONTRIBUTING.md"])
+        releases = markdown_section("CONTRIBUTING.md", "Releases")
+        self.assertIn("](#public-interface)", releases)
+        policy = markdown_section("README.md", "Support policy")
+        self.assertIn("](CONTRIBUTING.md#public-interface)", policy)
 
     def test_support_policy_matches_the_workflow_and_ci(self):
-        readme = (ROOT / "README.md").read_text()
-
         def section(title):
-            body = re.search(rf"(?ms)^## {title}\n(.*?)^## ", readme)
-            self.assertIsNotNone(body, f"README has no '## {title}' section")
-            return " ".join(body.group(1).split())
+            return " ".join(markdown_section("README.md", title).split())
 
         policy = section("Support policy")
         # The support window is the default python-versions, a run of minor versions.

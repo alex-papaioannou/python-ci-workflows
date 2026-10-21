@@ -11,8 +11,8 @@
   `Validate inputs` step so bad configuration fails before any project code runs.
 - Pin third-party actions to a full commit SHA with a version comment, and pin tool
   versions explicitly.
-- Every input needs a `description` and a row in the README inputs table. The test
-  suite checks this.
+- Every input and output needs a `description` and a row in the README's inputs or
+  outputs table. The test suite checks this.
 
 ## Design rules
 
@@ -34,6 +34,43 @@ even when no caller's run would fail.
 
 `alex-papaioannou/python-ci-workflows` is the permanent path: the repository will not
 be renamed or transferred, because every caller's `uses:` line names it.
+
+## Public interface
+
+Callers depend on these names and rules in their own workflows, branch protection
+and rulesets, so changing or removing one is a breaking change; adding one is not.
+
+- The workflow's path, `.github/workflows/python-ci.yml` in this repository, which
+  every caller's `uses:` line names.
+- The inputs, each with its type and default and what that default does, as the
+  README's inputs tables list them.
+- The outputs, which the README's outputs table lists: `result`.
+- The `result` job's id and its `name:`, both `result`, on a job with no matrix.
+  Branch protection and rulesets match required checks by name, and the README tells
+  callers to require `<caller job> / result`. Under a new name, or with a matrix that
+  adds its values to the name, that required check stays pending and blocks every
+  merge.
+- The artifact names `dist`, `junit-<os>-<python>` and `coverage-<os>-<python>`, each
+  plus the call suffix. Publish jobs and report tools download the artifacts by name.
+  - The call suffix is `-<call-name>`, or otherwise `-<working-directory>`: the
+    normalized path without leading or trailing separators, with each run of `/`,
+    `\`, `:`, `<`, `>`, `|`, `*`, `?` and `"` replaced by `-` and spaces kept. It is
+    empty when `call-name` is empty and `working-directory` is `.`, the defaults.
+  - `<os>` is the runner label, or for a label array or runner-group object its group
+    and labels joined with `-`, with each run of those characters or of whitespace
+    replaced by `-`.
+- The primary-cell rule: Ruff, pip-audit, the package build and the wheel test run
+  once per call, on the first entry of `operating-systems` with the first entry of
+  `python-versions` that is not in `experimental-python-versions`, or the first entry
+  of `python-versions` when every entry is experimental.
+
+Not part of the interface, and free to change in any release: log text and layout,
+the job summary layout, step names, and the names of the matrix test jobs.
+
+`tests/test_workflow_contract.py` pins the `result` job's id, its name and its lack
+of a matrix, and each upload step's artifact name. It also checks that the README
+documents every input and output. A change that adds an output or an artifact adds it
+to this list and to those tests.
 
 ## Local checks
 
@@ -71,11 +108,13 @@ against any of them fails the smoke test, and blocks releases, until the lock mo
 
 Releases follow semantic versioning and the README's
 [support policy](README.md#support-policy). A breaking change, which needs a new
-major version, is removing or renaming an input or output, changing an input's type,
-its default or what that default does, weakening one of the design rules above, or
-any other change that can fail an existing caller's run. Adding a Python version to
-the default `python-versions`, or removing one, changes a default. A minor release
-may still ship three kinds of change that can fail a run: a security fix that moves a
+major version, is removing or renaming an input or output; changing an input's type,
+its default or what that default does; changing or removing anything else listed
+under [Public interface](#public-interface), such as the `result` check's name or an
+artifact name; weakening one of the design rules above; or any other change that can
+fail an existing caller's run. Adding a Python version to the default
+`python-versions`, or removing one, changes a default. A minor release may still
+ship three kinds of change that can fail a run: a security fix that moves a
 tool version default, listed under Security, which may also ship in a patch release;
 a new version of something the workflow pins without an input (build, twine and the
 pinned actions), listed under Changed defaults, which may raise the self-hosted
