@@ -100,11 +100,11 @@ inside the checkout. JSON arrays are passed as strings.
 
 | Input | Type | Default | Description |
 | --- | --- | --- | --- |
-| `requirements-file` | string | `""` | Locked dependencies installed before checks. With the pip installer, pip's download cache is saved between runs, keyed on this file. A requirements `.txt` works with either installer. With `installer: uv` it may also be a `uv.lock` (exported with `project-extras` and the default groups) or a `pylock.toml`. |
+| `requirements-file` | string | `""` | Locked dependencies installed before checks. With the pip installer, pip's download cache is saved between runs, keyed on this file. A requirements `.txt` works with either installer. It may also be a `uv.lock` (exported with `project-extras` and the default groups) or a `pylock.toml` (or `pylock.<name>.toml`), which are always installed with uv. |
 | `install-project` | boolean | `false` | `pip install --editable .` after requirements. With a `requirements-file`, dependencies are assumed locked and installed with `--no-deps`. pip's download cache is keyed on `pyproject.toml` when there is no `requirements-file`. |
 | `project-extras` | string | `""` | Comma-separated extras installed with the project, such as `test,dev`. |
-| `installer` | string | `pip` | `pip` or `uv`. uv installs into the same interpreter and is much faster on large dependency sets. uv's own cache is not saved between runs. |
-| `uv-version` | string | `0.13.4` | uv version used when `installer` is `uv`. |
+| `installer` | string | `pip` | `pip` or `uv`. uv installs into the same interpreter and is much faster on large dependency sets. uv's own cache is not saved between runs. A `uv.lock` or `pylock.toml` `requirements-file` is always installed with uv, the only installer that reads them, so `installer` has no effect with those files, even when set to `pip`. The validation step logs the installer and why it was chosen, and adds that line to the job summary when `requirements-file` or `install-project` is set. |
+| `uv-version` | string | `0.13.4` | uv version used when installing with uv: with `installer: uv`, or a `uv.lock` or `pylock.toml` `requirements-file`. |
 | `require-hashes` | boolean | `true` | Install with `--require-hashes`. Generate files with `pip-compile --generate-hashes` or `uv pip compile --generate-hashes`. |
 
 ### Dependency audit
@@ -266,9 +266,9 @@ are skipped.
 1. Check out the caller's repository without persisting credentials.
 2. Set up Python, with pip's download cache when `requirements-file` or
    `install-project` is set. uv's own cache is not saved between runs.
-3. Validate inputs: paths, JSON arrays, versions, globs and regexes, and choose the
-   test runner for `test-runner: auto`. Bad configuration fails here, before any
-   project code runs.
+3. Validate inputs: paths, JSON arrays, versions, globs and regexes. Choose the test
+   runner for `test-runner: auto`, and uv as the installer for a `uv.lock` or
+   `pylock.toml`. Bad configuration fails here, before any project code runs.
 4. Install requirements and the project, then audit them.
 5. Run Ruff, then mypy.
 6. Byte-compile `compile-paths`.
@@ -384,7 +384,8 @@ request:
 - `src-package`: a src-layout package whose pytest tests run through
   `test-runner: auto`, an editable install with extras, and a package build whose
   wheel is tested on Linux and Windows.
-- `uv-project`: dependencies locked in `uv.lock`, installed with uv and audited.
+- `uv-project`: dependencies locked in `uv.lock`, installed with uv without setting
+  `installer`, and audited.
 
 They double as copy-and-paste starting points. This repository's CI also calls the
 workflow on itself on Linux, Windows and macOS with most features enabled, and lints the workflow files with actionlint and zizmor. See

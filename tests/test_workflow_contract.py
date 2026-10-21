@@ -23,6 +23,7 @@ ROOT = Path(__file__).parents[1]
 WORKFLOW = ROOT / ".github/workflows/python-ci.yml"
 STEPS = ROOT / ".github/actions/python-ci/steps.py"
 SMOKE = ROOT / ".github/workflows/ci.yml"
+EXAMPLES = ROOT / ".github/workflows/examples.yml"
 DEV_REQUIREMENTS = ROOT / "requirements-dev.txt"
 
 # Variables the workflow sets from its inputs. Inner runs must not inherit them from
@@ -54,6 +55,27 @@ def script(name):
         if match:
             return match.group(1)
     raise AssertionError(f"Step {name!r} does not run a step script")
+
+
+def input_readers(name):
+    """List the job settings and steps outside 'Validate inputs' that read an input."""
+    # inputs.name or inputs['name'], as json.dumps escapes quotes. Expressions
+    # ignore case in property names, so inputs.Name reads the same input.
+    quoted = re.escape(name)
+    reads = re.compile(
+        rf"inputs(\.{quoted}(?![\w-])|\[\s*\\?['\"]{quoted}\\?['\"]\s*\])",
+        re.IGNORECASE,
+    )
+    readers = []
+    for job_name, job in yaml.safe_load(WORKFLOW.read_text())["jobs"].items():
+        for key, value in job.items():
+            if key != "steps" and reads.search(json.dumps(value)):
+                readers.append(f"{job_name}: {key}")
+        for step in job.get("steps", []):
+            step_name = step.get("name") or step.get("uses")
+            if step_name != "Validate inputs" and reads.search(json.dumps(step)):
+                readers.append(f"{job_name}: {step_name}")
+    return readers
 
 
 class StepHarness:
@@ -1272,21 +1294,12 @@ class AutoRunnerTests(StepHarness, unittest.TestCase):
 
     @unittest.skipUnless(yaml, "needs PyYAML")
     def test_only_validation_reads_the_test_runner_input(self):
-        jobs = yaml.safe_load(WORKFLOW.read_text())["jobs"]
-        # inputs.test-runner or inputs['test-runner'], as json.dumps escapes quotes.
-        reads = re.compile(
-            r"inputs(\.test-runner|\[\s*\\?['\"]test-runner\\?['\"]\s*\])"
+        self.assertEqual(
+            input_readers("test-runner"),
+            [],
+            "these must use the validate step's output",
         )
-        readers = []
-        for job_name, job in jobs.items():
-            for key, value in job.items():
-                if key != "steps" and reads.search(json.dumps(value)):
-                    readers.append(f"{job_name}: {key}")
-            for step in job.get("steps", []):
-                name = step.get("name") or step.get("uses")
-                if name != "Validate inputs" and reads.search(json.dumps(step)):
-                    readers.append(f"{job_name}: {name}")
-        self.assertEqual(readers, [], "these must use the validate step's output")
+        jobs = yaml.safe_load(WORKFLOW.read_text())["jobs"]
         steps = {step.get("name"): step for step in jobs["test"]["steps"]}
         resolved = "${{ steps.validate.outputs.test-runner }}"
         for name in (
@@ -1520,22 +1533,152 @@ class UvInstallerTests(StepHarness, unittest.TestCase):
 
     def test_installer_inputs_validated(self):
         cases = (
-            ({"INSTALLER": "conda"}, {}),
-            ({"INSTALLER": "uv", "UV_VERSION": ""}, {}),
-            ({"REQUIREMENTS_FILE": "uv.lock"}, {"uv.lock": ""}),
-            ({"REQUIREMENTS_FILE": "pylock.toml"}, {"pylock.toml": ""}),
+            ({"INSTALLER": "conda"}, {}, "installer must be pip or uv"),
+            (
+                {"INSTALLER": "conda", "REQUIREMENTS_FILE": "uv.lock"},
+                {"uv.lock": ""},
+                "installer must be pip or uv",
+            ),
+            ({"INSTALLER": "uv", "UV_VERSION": ""}, {}, "uv-version must be"),
+            # A lock file chooses uv, so it needs a uv version too.
+            ({"REQUIREMENTS_FILE": "uv.lock"}, {"uv.lock": ""}, "uv-version must be"),
         )
-        for env, files in cases:
-            result = self.execute(
-                {"tests/test_ok.py": "", **files}, env, step="Validate inputs"
-            )
-            self.assertNotEqual(result.returncode, 0, env)
+        for env, files, error in cases:
+            with self.subTest(env=env):
+                result = self.execute(
+                    {"tests/test_ok.py": "", **files}, env, step="Validate inputs"
+                )
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn(error, result.stderr)
         ok = self.execute(
             {"tests/test_ok.py": "", "uv.lock": ""},
             {**UV, "REQUIREMENTS_FILE": "uv.lock", "PROJECT_EXTRAS": "test"},
             step="Validate inputs",
         )
         self.assertEqual(ok.returncode, 0, ok.stderr)
+
+    def resolve(self, files, env):
+        """Run validation; return its installer output, log and job summary."""
+        with tempfile.TemporaryDirectory() as out:
+            output, summary = Path(out) / "output", Path(out) / "summary.md"
+            summary.touch()  # as the runner does before each step
+            result = self.execute(
+                {"tests/test_ok.py": "", **files},
+                {
+                    "UV_VERSION": "0.13.4",
+                    **env,
+                    "GITHUB_OUTPUT": str(output),
+                    "GITHUB_STEP_SUMMARY": str(summary),
+                },
+                step="Validate inputs",
+            )
+            self.assertEqual(result.returncode, 0, result.stderr)
+            values = dict(
+                line.split("=", 1)
+                for line in output.read_text(encoding="utf-8").splitlines()
+            )
+            return (
+                values["installer"],
+                result.stdout,
+                summary.read_text(encoding="utf-8"),
+            )
+
+    def test_lock_files_are_installed_with_uv_whatever_the_installer(self):
+        lock_files = {
+            "uv.lock": "uv.lock",
+            "deps/uv.lock": "uv.lock",
+            "pylock.toml": "pylock.toml",
+            "pylock.dev.toml": "pylock.dev.toml",
+        }
+        # The workflow passes the default, pip, when the caller sets no installer.
+        for installer in ("pip", "uv"):
+            for path, name in lock_files.items():
+                with self.subTest(installer=installer, requirements_file=path):
+                    chosen, log, summary = self.resolve(
+                        {path: ""},
+                        {"INSTALLER": installer, "REQUIREMENTS_FILE": path},
+                    )
+                    self.assertEqual(chosen, "uv")
+                    line = f"Installer: uv (requirements-file is {name})"
+                    self.assertIn(line, log)
+                    self.assertIn(line, summary)
+
+    def test_other_requirements_use_the_installer_input(self):
+        requirements = {"requirements.txt": "", "pylock-notes.toml": ""}
+        for installer in ("pip", "uv"):
+            for name in requirements:
+                with self.subTest(installer=installer, requirements_file=name):
+                    chosen, log, summary = self.resolve(
+                        requirements,
+                        {"INSTALLER": installer, "REQUIREMENTS_FILE": name},
+                    )
+                    self.assertEqual(chosen, installer)
+                    line = f"Installer: {installer} (installer input)"
+                    self.assertIn(line, log)
+                    self.assertIn(line, summary)
+        _, _, summary = self.resolve(
+            {"pyproject.toml": ""}, {"INSTALLER": "uv", "INSTALL_PROJECT": "true"}
+        )
+        self.assertIn("Installer: uv (installer input)", summary)
+        # With nothing to install the installer is unused, so the summary stays as is.
+        chosen, log, summary = self.resolve({}, {"INSTALLER": "pip"})
+        self.assertEqual(chosen, "pip")
+        self.assertIn("Installer: pip (installer input)", log)
+        self.assertNotIn("Installer", summary)
+
+    def test_the_default_installer_installs_a_uv_lock_with_uv(self):
+        fixture = Path(__file__).parent / "fixtures/uv-project"
+        files = {
+            name: (fixture / name).read_text() for name in ("pyproject.toml", "uv.lock")
+        }
+        # The workflow's defaults for installer and uv-version.
+        inputs = {
+            "INSTALLER": "pip",
+            "UV_VERSION": "0.13.4",
+            "REQUIREMENTS_FILE": "uv.lock",
+        }
+        chosen, _, _ = self.resolve(files, inputs)
+        # The install step receives the validate step's installer output.
+        python = self.install_into_venv(files, {**inputs, "INSTALLER": chosen})
+        for module in ("iniconfig", "uv"):
+            check = subprocess.run([str(python), "-c", f"import {module}"], check=False)
+            self.assertEqual(check.returncode, 0, module)
+
+    @unittest.skipUnless(yaml, "needs PyYAML")
+    def test_only_validation_reads_the_installer_input(self):
+        self.assertEqual(
+            input_readers("installer"), [], "these must use the validate step's output"
+        )
+        jobs = yaml.safe_load(WORKFLOW.read_text())["jobs"]
+        steps = {step.get("name"): step for step in jobs["test"]["steps"]}
+        self.assertEqual(
+            steps["Validate inputs"]["env"]["INSTALLER"], "${{ inputs.installer }}"
+        )
+        for name in ("Install dependencies", "Build and check package"):
+            with self.subTest(step=name):
+                self.assertEqual(
+                    steps[name]["env"]["INSTALLER"],
+                    "${{ steps.validate.outputs.installer }}",
+                )
+
+    @unittest.skipUnless(yaml, "needs PyYAML")
+    def test_the_default_stays_pip_and_the_uv_example_sets_no_installer(self):
+        inputs = yaml.safe_load(WORKFLOW.read_text())[True]["workflow_call"]["inputs"]
+        self.assertEqual(inputs["installer"]["default"], "pip")
+        example = yaml.safe_load(EXAMPLES.read_text())["jobs"]["uv-project"]["with"]
+        self.assertNotIn("installer", example)
+        result = self.run_step(
+            ROOT,
+            "Validate inputs",
+            {
+                "INSTALLER": inputs["installer"]["default"],
+                "UV_VERSION": inputs["uv-version"]["default"],
+                "REQUIREMENTS_FILE": example["requirements-file"],
+            },
+            cwd=ROOT / example["working-directory"],
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("Installer: uv (requirements-file is uv.lock)", result.stdout)
 
 
 class AuditTests(StepHarness, unittest.TestCase):

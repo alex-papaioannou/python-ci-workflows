@@ -39,6 +39,13 @@ major tag such as `v1`, an exact release, or a commit SHA.
 
 ### Changed
 
+- A `uv.lock` or `pylock.toml` `requirements-file` now installs with uv when
+  `installer` is left at its default, where validation used to fail. Only uv reads
+  these files, so `installer` has no effect with them, even when set to `pip`. The
+  validation step logs the installer and the reason, such as
+  `Installer: uv (requirements-file is uv.lock)`, adds that line to the job summary
+  when `requirements-file` or `install-project` is set, and passes the resolved
+  installer to the install and build steps. The default stays `pip`.
 - The release job fails when a section has Breaking changes entries but keeps the
   major version, or raises the major version without any. It also releases no new
   version while Unreleased has Breaking changes entries, so breaking changes can no
