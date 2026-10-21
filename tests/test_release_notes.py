@@ -993,6 +993,17 @@ class ReadmePinTests(unittest.TestCase):
         # The major tag is only the quick start's convenience option.
         self.assertEqual(calls.count(major), 1)
 
+    def test_example_callers_pin_the_quick_start_release(self):
+        # The example callers are copied into repositories of their own, so they
+        # follow the same pin, and the pull request that moves it moves theirs too.
+        ref, _, _ = self.quick_start_pin()
+        callers = sorted(ROOT.glob("examples/*/.github/workflows/*.yml"))
+        self.assertEqual(len(callers), 3)
+        for caller in callers:
+            with self.subTest(caller=caller.relative_to(ROOT).as_posix()):
+                text = caller.read_text(encoding="utf-8")
+                self.assertEqual(WORKFLOW_CALL.findall(text), [ref])
+
     def test_quick_start_pin_is_the_release_commit(self):
         # CI checks out one commit without tags, so the tag is looked up on GitHub
         # when it is not fetched, and a mistyped SHA in the pull request that

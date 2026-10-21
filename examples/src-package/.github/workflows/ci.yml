@@ -1,0 +1,35 @@
+# CI for this project in a repository of its own. In python-ci-workflows the
+# "Example consumers" workflow runs the project instead, because GitHub runs only
+# the workflows in the top-level .github/workflows.
+name: CI
+on:
+  push:
+    branches: [main]
+  pull_request:
+  # Needed only when a merge queue protects the branch.
+  merge_group:
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  # A pull request's runs share a group, so a new push cancels the run it
+  # supersedes. Every other run has a group of its own and always finishes.
+  group: ${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.ref || github.run_id }}
+  cancel-in-progress: true
+jobs:
+  python:
+    uses: alex-papaioannou/python-ci-workflows/.github/workflows/python-ci.yml@49d202ab203e05b7bd8a29376b0fa44188e9bdaa # v1.1.0
+    with:
+      python-versions: '["3.11", "3.14"]'
+      operating-systems: '["ubuntu-latest", "windows-latest"]'
+      # Unreleased: examples.yml sets test-runner: auto, which picks pytest because
+      # [project.optional-dependencies] test lists it. The pinned release needs
+      # the runner named.
+      test-runner: pytest
+      install-project: true
+      project-extras: test
+      build-package: true
+      test-wheel: true
+      upload-dist: true
+      junit-file: test-results/junit.xml
+      coverage-version: "7.16.2"

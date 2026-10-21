@@ -12,13 +12,34 @@ Create `.github/workflows/ci.yml` in the consuming repository:
 
 ```yaml
 name: CI
-on: [push, pull_request]
+on:
+  push:
+    branches: [main]
+  pull_request:
+  # Needed only when a merge queue protects the branch.
+  merge_group:
+  workflow_dispatch:
 permissions:
   contents: read
+concurrency:
+  # A pull request's runs share a group, so a new push cancels the run it
+  # supersedes. Every other run has a group of its own and always finishes.
+  group: ${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.ref || github.run_id }}
+  cancel-in-progress: true
 jobs:
   python:
     uses: alex-papaioannou/python-ci-workflows/.github/workflows/python-ci.yml@49d202ab203e05b7bd8a29376b0fa44188e9bdaa # v1.1.0
 ```
+
+The workflow needs no secrets, so the call passes no `secrets:` and no
+`secrets: inherit`.
+
+It runs once per change. A push to a pull request's branch starts only the pull
+request run, because `push` runs only for `main`. `merge_group` lets a required
+check report in a merge queue, and `workflow_dispatch` adds a **Run workflow**
+button. The `concurrency` block cancels a pull request's run when a newer push
+supersedes it, and never cancels or queues a run on `main`, in a merge queue or
+started by hand.
 
 The `uses:` line pins the newest release by its full commit SHA, so the code you run
 changes only when you change that line, and the comment names the release.
@@ -34,18 +55,52 @@ git ls-remote https://github.com/alex-papaioannou/python-ci-workflows refs/tags/
 The convenience option is the major tag, which follows every compatible release with
 no updates on your side:
 
+<!-- lint-snippets: accept unpinned-uses -->
 ```yaml
+jobs:
+  python:
     uses: alex-papaioannou/python-ci-workflows/.github/workflows/python-ci.yml@v1
 ```
 
 zizmor's `unpinned-uses` audit flags `@v1`, because the tag moves to each new
 release; it accepts the SHA-pinned line.
 
-Either call runs the tests with `unittest`. For pytest tests, set
-`test-runner: pytest` under `with:`, or `test-runner: auto` to pick pytest when the
-project has pytest configuration, a `conftest.py` in `working-directory` or
-`test-directory`, or a `pytest` requirement in one of the places listed under
-`test-runner` in [Tests](#tests).
+Either call runs the tests with `unittest`, which does not collect pytest's plain
+test functions. The run then fails with "No tests discovered", or with an import
+error when a test module imports pytest. For pytest tests, use this file instead:
+
+```yaml
+name: CI
+on:
+  push:
+    branches: [main]
+  pull_request:
+  # Needed only when a merge queue protects the branch.
+  merge_group:
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  # A pull request's runs share a group, so a new push cancels the run it
+  # supersedes. Every other run has a group of its own and always finishes.
+  group: ${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.ref || github.run_id }}
+  cancel-in-progress: true
+jobs:
+  python:
+    uses: alex-papaioannou/python-ci-workflows/.github/workflows/python-ci.yml@49d202ab203e05b7bd8a29376b0fa44188e9bdaa # v1.1.0
+    with:
+      test-runner: pytest
+```
+
+Unreleased: on `main`, `test-runner: auto` picks pytest when the project has pytest
+configuration, a `conftest.py` in `working-directory` or `test-directory`, or a
+`pytest` requirement in one of the places listed under `test-runner` in
+[Tests](#tests). The release the quick start pins accepts only `unittest` and
+`pytest`.
+
+The example projects in [`examples/`](examples) each have a complete
+`.github/workflows/ci.yml` of this kind to copy along with the project (see
+[Development](#development)).
 
 A fuller configuration:
 
@@ -62,7 +117,6 @@ jobs:
       coverage-version: "7.16.2"
       coverage-fail-under: 90
       junit-file: test-results/junit.xml
-      cancel-in-progress: true
 ```
 
 ### Free-threaded Python
@@ -308,9 +362,8 @@ so calls never collide: `dist`, `junit-<os>-<python>` and `coverage-<os>-<python
 gain `-<call-name>`, or otherwise `-<working-directory>` with `/` replaced by `-`. A
 single call with the default `working-directory: .` keeps the plain names.
 
-To serialize or cancel whole caller runs instead, set `concurrency:` on the caller
-workflow itself, for example
-`concurrency: {group: ci-${{ github.ref }}, cancel-in-progress: true}`.
+To cancel whole caller runs instead, set `concurrency:` on the caller workflow
+itself, as the [quick start](#quick-start) does.
 
 ### Adding setup steps
 
@@ -579,12 +632,22 @@ request:
 - `uv-project`: dependencies locked in `uv.lock`, installed with uv without setting
   `installer`, and audited.
 
-They double as copy-and-paste starting points. This repository's CI also calls the
-workflow on itself on Linux, Windows and macOS with most features enabled, including
-a pre-test hook that sets a variable a test checks on every cell, and lints the
-workflow files with actionlint and zizmor. See
-[CONTRIBUTING.md](CONTRIBUTING.md) for conventions and [CHANGELOG.md](CHANGELOG.md)
-for release history.
+They double as copy-and-paste starting points. Each has a
+`.github/workflows/ci.yml` that calls the release the quick start pins with the
+inputs of its job in `examples.yml`, apart from `working-directory` and the inputs
+added after that release. Where that job relies on something the release does not
+have, such as `test-runner: auto`, the file uses what the release supports, under a
+comment that says Unreleased. Copied with its project into a repository of its own,
+the file runs as it is. GitHub runs only the workflows in a repository's top-level
+`.github/workflows`, so it never runs here.
+
+This repository's CI also calls the workflow on itself on Linux, Windows and macOS
+with most features enabled, including a pre-test hook that sets a variable a test
+checks on every cell. The `Workflow lint` workflow runs actionlint and zizmor
+on the workflow files and, through `.github/scripts/lint_snippets.py`, on the
+example callers and every YAML example with a `jobs:` key in this README and
+`docs/`. See [CONTRIBUTING.md](CONTRIBUTING.md) for conventions and
+[CHANGELOG.md](CHANGELOG.md) for release history.
 
 ## License
 

@@ -115,6 +115,18 @@ major tag such as `v1`, an exact release, or a commit SHA.
   fails when a YAML example in the README or `docs/` passes `python-ci.yml` an
   input that it does not declare, or one whose "Added in" is Unreleased without
   saying Unreleased in the paragraph before it.
+- Each example project has a `.github/workflows/ci.yml` that calls the release the
+  quick start pins with the inputs of its job in `examples.yml`, so it can be copied
+  with the project into a repository of its own and run as it is. The test suite
+  fails when a caller's inputs differ from its job's other than by
+  `working-directory`, by the inputs added after the release it pins, or by a
+  stand-in listed in the test suite for a value or behaviour that release does not
+  have. It also fails when a caller pins another release than the quick start, or
+  keeps a stand-in once it pins a release that has what the stand-in replaces. The
+  `Workflow lint` workflow runs `.github/scripts/lint_snippets.py`, which lints
+  these callers, and every YAML example with a `jobs:` key in the README and
+  `docs/`, with actionlint and zizmor. An example accepts the findings of one audit
+  only through a marker comment directly above it.
 
 ### Changed
 
@@ -137,6 +149,15 @@ major tag such as `v1`, an exact release, or a commit SHA.
   parallel tests never install them into the same interpreter at once.
 - Release notes list Breaking changes, Changed defaults and Behaviour changes before
   the other subsections.
+- The README quick start runs once per change: on pushes to `main`, pull requests,
+  merge queues (`merge_group`) and manual runs. `on: [push, pull_request]` ran a
+  pull request from a branch of the same repository twice. Its `concurrency` block
+  cancels a pull request's run when a newer push supersedes it, and never cancels or
+  queues a run on `main`. It says that the call needs no secrets, and a pytest
+  variant sets `test-runner: pytest`, without which pytest tests fail with "No tests
+  discovered", or with an import error when a test module imports pytest. The
+  fuller configuration no longer sets `cancel-in-progress: true`, which also
+  cancelled runs on `main`.
 
 ### Fixed
 

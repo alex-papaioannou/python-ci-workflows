@@ -3160,15 +3160,18 @@ class ToolDefaultTests(unittest.TestCase):
 # The opening or closing line of a fenced code block, and its info string.
 CODE_FENCE = re.compile(r"[ \t]*(`{3,}|~{3,})[ \t]*([^`\s]*)")
 CALLED_WORKFLOW = re.compile(r"(?:^|/)\.github/workflows/python-ci\.yml(?:@|$)")
+# A comment that .github/scripts/lint_snippets.py reads; GitHub does not show it.
+LINT_MARKER = re.compile(r"[ \t]*<!--[ \t]*lint-snippets:.*-->[ \t]*")
 
 
 def yaml_blocks(markdown):
     """Yield (line, paragraph, text) for each YAML code block in Markdown.
 
     line is the number of the opening fence's line, and paragraph the text of the
-    run of non-blank lines directly before the fence, or "" after another block. A
-    block of any language that never closes runs to the end of the file and hides
-    the blocks after it, so it is yielded with text None.
+    run of non-blank lines directly before the fence, or "" after another block,
+    passing over lint-snippets markers. A block of any language that never closes
+    runs to the end of the file and hides the blocks after it, so it is yielded
+    with text None.
     """
     paragraph, previous_blank = [], True
     fence = None  # (marker, language, line, paragraph, lines) of an open block.
@@ -3176,6 +3179,8 @@ def yaml_blocks(markdown):
         marker = CODE_FENCE.match(line)
         if fence is None and marker:
             fence = (marker.group(1), marker.group(2), number, " ".join(paragraph), [])
+        elif fence is None and LINT_MARKER.fullmatch(line):
+            continue
         elif fence is None:
             if line.strip() and previous_blank:
                 paragraph = []
@@ -3263,17 +3268,10 @@ class DocumentationSnippetTests(unittest.TestCase):
         )
 
     def test_the_readme_and_docs_examples_pass_only_released_inputs(self):
-        script = importlib.util.spec_from_file_location(
-            "inputs_table", ROOT / ".github/scripts/inputs_table.py"
-        )
-        assert script and script.loader
-        inputs_table = importlib.util.module_from_spec(script)
-        script.loader.exec_module(inputs_table)
-        cells = inputs_table.expected_cells(
-            WORKFLOW.read_text(encoding="utf-8"),
-            (ROOT / "CHANGELOG.md").read_text(encoding="utf-8"),
-        )
-        unreleased = {name for name, cell in cells.items() if cell[2] == "Unreleased"}
+        added = added_in()
+        unreleased = {
+            name for name, section in added.items() if section == "Unreleased"
+        }
         documents = [ROOT / "README.md", *sorted((ROOT / "docs").glob("*.md"))]
         found = set()
         for path in documents:
@@ -3281,7 +3279,7 @@ class DocumentationSnippetTests(unittest.TestCase):
             name = path.relative_to(ROOT).as_posix()
             with self.subTest(document=name):
                 self.assertEqual(
-                    snippet_input_problems(name, markdown, set(cells), unreleased), []
+                    snippet_input_problems(name, markdown, set(added), unreleased), []
                 )
             for _, _, text in yaml_blocks(markdown):
                 found.update(called_inputs(yaml.safe_load(text or "")))
@@ -3304,6 +3302,8 @@ class DocumentationSnippetTests(unittest.TestCase):
         for before, failures in (
             ("Unreleased: `new-thing` is on main only.\n\n", 0),
             ("Run it\nwith `new-thing`, which is Unreleased:\n", 0),
+            # Readers do not see a lint-snippets marker between the two.
+            ("`new-thing` is Unreleased:\n\n<!-- lint-snippets: accept x -->\n", 0),
             ("Run it with `new-thing`:\n\n", 1),
             # Only the paragraph directly before the block counts.
             ("`new-thing` is Unreleased.\n\nRun it:\n\n", 1),
@@ -3358,3 +3358,386 @@ class DocumentationSnippetTests(unittest.TestCase):
                 self.assertEqual(
                     problem, "DOC.md line 3: the code block has no closing fence"
                 )
+
+
+def load_workflow(text):
+    """Parse a workflow, with its triggers under "on" rather than True."""
+    document = yaml.safe_load(text)
+    document["on"] = document.pop(True, document.get("on"))
+    return document
+
+
+def quick_start_workflows():
+    """Return the text of each complete workflow in the README's quick start."""
+    return [
+        text
+        for _, _, text in yaml_blocks(markdown_section("README.md", "Quick start"))
+        if re.search(r"(?m)^on:", text)
+    ]
+
+
+# The release a caller pins: a full commit SHA, then a "# vX.Y.Z" comment.
+CALLER_PIN = re.compile(
+    r"^[ \t]+uses: \S+@[0-9a-f]{40} # v([0-9]+\.[0-9]+\.[0-9]+)$", re.MULTILINE
+)
+# The settings in which an example caller may differ from its job in examples.yml,
+# because the job relies on a value or behaviour that the release the caller pins
+# does not have. Each maps (example, input) to the job's value (None when the job
+# leaves the input out), the caller's value, and text from the CHANGELOG.md entry
+# that adds what the job relies on. A stand-in lapses once the caller pins a release
+# whose section has that text, so the pull request that moves the pin removes it.
+STAND_INS = {
+    ("src-package", "test-runner"): ("auto", "pytest", "`test-runner: auto`"),
+    ("uv-project", "installer"): (
+        None,
+        "uv",
+        "A `uv.lock` or `pylock.toml` `requirements-file` now installs with uv",
+    ),
+}
+
+
+def added_in():
+    """Map each input to its Added in: a CHANGELOG.md section's title."""
+    script = importlib.util.spec_from_file_location(
+        "inputs_table", ROOT / ".github/scripts/inputs_table.py"
+    )
+    assert script and script.loader
+    inputs_table = importlib.util.module_from_spec(script)
+    script.loader.exec_module(inputs_table)
+    cells = inputs_table.expected_cells(
+        WORKFLOW.read_text(encoding="utf-8"),
+        (ROOT / "CHANGELOG.md").read_text(encoding="utf-8"),
+    )
+    return {name: cell[2] for name, cell in cells.items()}
+
+
+def newer_than(section, version):
+    """Whether a CHANGELOG.md section is Unreleased or a release after version."""
+    if section == "Unreleased":
+        return True
+    return tuple(map(int, section.split("."))) > tuple(map(int, version.split(".")))
+
+
+def first_section_with(changelog, text):
+    """Return the title of the oldest CHANGELOG.md section that has text, or None."""
+    found = None
+    for section in re.finditer(
+        r"(?ms)^## \[([^\]]+)\][^\n]*\n(.*?)(?=^## |\Z)", changelog
+    ):
+        if text in " ".join(section.group(2).split()):
+            found = section.group(1)
+    return found
+
+
+def setting_comment(caller_text, key):
+    """Return the comment lines directly above key in the caller's with: block."""
+    block = re.search(
+        r"(?m)^([ \t]+)with:[ \t]*\n((?:\1[ \t]+.*\n)*)", caller_text + "\n"
+    )
+    setting = block and re.search(
+        rf"(?m)((?:^[ \t]*#.*\n)*)^[ \t]+{re.escape(key)}[ \t]*:", block.group(2)
+    )
+    return setting.group(1) if setting else ""
+
+
+def caller_differences(example, caller_text, added, changelog, stand_ins):
+    """List how a copyable caller's with: differs from its examples.yml job's.
+
+    The caller runs at the root of a repository of its own, so it leaves out
+    working-directory. The release it pins rejects the inputs added after it, whose
+    Added in, from added, is Unreleased or a newer release, so it leaves those out
+    too. Any other setting is the job's, unless stand_ins maps it to the job's
+    value, the caller's and the text of the changelog entry that adds what the job
+    relies on. That text must be in a section newer than the pinned release, and a
+    comment directly above the setting in with: must say Unreleased.
+    """
+    pin = CALLER_PIN.search(caller_text)
+    if pin is None:
+        return ["the caller pins no release by commit SHA with a '# vX.Y.Z' comment"]
+    pinned = pin.group(1)
+    newer = {key for key, section in added.items() if newer_than(section, pinned)}
+    expected = {
+        key: value
+        for key, value in example.items()
+        if key != "working-directory" and key not in newer
+    }
+    (call,) = load_workflow(caller_text)["jobs"].values()
+    caller = call.get("with") or {}
+    problems = []
+    for key in sorted(set(expected) | set(caller) | set(stand_ins)):
+        if key == "working-directory" and key in caller:
+            problems.append(
+                f"{key}: the caller runs at the root of its own repository, so it "
+                "leaves working-directory out"
+            )
+        elif key in newer and key in caller:
+            problems.append(
+                f"{key}: its Added in is {added[key]}, so the caller's pinned "
+                f"v{pinned} rejects it"
+            )
+        elif key in stand_ins:
+            value, stand_in, text = stand_ins[key]
+            section = first_section_with(changelog, text)
+            if (example.get(key), caller.get(key)) != (value, stand_in):
+                problems.append(
+                    f"{key}: its stand-in replaces {value!r} with {stand_in!r}, but "
+                    f"examples.yml passes {example.get(key)!r} and the caller "
+                    f"{caller.get(key)!r}"
+                )
+            elif section is None or not newer_than(section, pinned):
+                problems.append(
+                    f"{key}: no CHANGELOG.md section newer than the pinned v{pinned} "
+                    f"has {text!r}, so the caller passes the job's setting instead "
+                    "of its stand-in"
+                )
+            elif "Unreleased" not in setting_comment(caller_text, key):
+                problems.append(
+                    f"{key}: the caller passes {stand_in!r} for {value!r} without a "
+                    "comment above it in with: that says Unreleased"
+                )
+        elif key not in caller:
+            problems.append(
+                f"{key}: examples.yml passes {expected[key]!r}, and the caller leaves "
+                "it out"
+            )
+        elif key not in expected:
+            problems.append(
+                f"{key}: examples.yml leaves it out, and the caller passes "
+                f"{caller[key]!r}"
+            )
+        elif expected[key] != caller[key]:
+            problems.append(
+                f"{key}: examples.yml passes {expected[key]!r} and the caller "
+                f"{caller[key]!r}"
+            )
+    return problems
+
+
+@unittest.skipUnless(yaml, "needs PyYAML")
+class QuickStartTests(unittest.TestCase):
+    """The first workflow people copy runs once per change and needs no secrets."""
+
+    def test_it_runs_once_per_change_and_cancels_only_superseded_pull_requests(self):
+        texts = quick_start_workflows()
+        # The quick start and its pytest variant.
+        self.assertEqual(len(texts), 2)
+        for text in texts:
+            workflow = load_workflow(text)
+            with self.subTest(workflow=workflow["jobs"]):
+                self.assertEqual(
+                    workflow["on"],
+                    {
+                        "push": {"branches": ["main"]},
+                        "pull_request": None,
+                        "merge_group": None,
+                        "workflow_dispatch": None,
+                    },
+                )
+                self.assertIn(
+                    "  # Needed only when a merge queue protects the branch.\n"
+                    "  merge_group:\n",
+                    text,
+                )
+                self.assertEqual(workflow["permissions"], {"contents": "read"})
+                # A pull request's runs share the group of its merge ref; any other
+                # run's group is its own run id, so nothing cancels or queues it.
+                self.assertEqual(
+                    workflow["concurrency"],
+                    {
+                        "group": "${{ github.workflow }}-${{ github.event_name == "
+                        "'pull_request' && github.ref || github.run_id }}",
+                        "cancel-in-progress": True,
+                    },
+                )
+                (job,) = workflow["jobs"].values()
+                self.assertNotIn("secrets", job)
+        words = " ".join(markdown_section("README.md", "Quick start").split())
+        self.assertIn(
+            "The workflow needs no secrets, so the call passes no `secrets:` and no "
+            "`secrets: inherit`.",
+            words,
+        )
+
+    def test_the_pytest_variant_differs_only_by_the_runner(self):
+        unittest_run, pytest_run = map(load_workflow, quick_start_workflows())
+        (job,) = unittest_run["jobs"].values()
+        self.assertNotIn("with", job)
+        (variant,) = pytest_run["jobs"].values()
+        self.assertEqual(variant.pop("with"), {"test-runner": "pytest"})
+        self.assertEqual(pytest_run, unittest_run)
+
+
+@unittest.skipUnless(yaml, "needs PyYAML")
+class ExampleCallerTests(unittest.TestCase):
+    """Each example project has a caller workflow that works when copied."""
+
+    def test_each_caller_passes_the_inputs_of_its_examples_job(self):
+        added = added_in()
+        changelog = (ROOT / "CHANGELOG.md").read_text(encoding="utf-8")
+        jobs = yaml.safe_load(EXAMPLES.read_text(encoding="utf-8"))["jobs"]
+        callers = set()
+        for name, job in jobs.items():
+            path = ROOT / job["with"]["working-directory"] / ".github/workflows/ci.yml"
+            callers.add(path)
+            text = path.read_text(encoding="utf-8")
+            (call,) = load_workflow(text)["jobs"].values()
+            stand_ins = {
+                key: stand_in
+                for (example, key), stand_in in STAND_INS.items()
+                if example == name
+            }
+            with self.subTest(example=name):
+                self.assertTrue(
+                    call["uses"].startswith(
+                        "alex-papaioannou/python-ci-workflows/.github/workflows/"
+                        "python-ci.yml@"
+                    )
+                )
+                self.assertEqual(
+                    caller_differences(job["with"], text, added, changelog, stand_ins),
+                    [],
+                )
+        # Every caller and stand-in belongs to an example that examples.yml runs.
+        self.assertEqual(set(ROOT.glob("examples/*/.github/workflows/*")), callers)
+        self.assertLessEqual({example for example, _ in STAND_INS}, set(jobs))
+
+    def test_a_caller_that_differs_from_its_job_fails(self):
+        example = {
+            "working-directory": "examples/a",
+            "x": "1",
+            "runner": "auto",
+            "old": 3,
+            "next": 4,
+            "new": True,
+        }
+        added = {
+            "x": "1.0.0",
+            "runner": "1.0.0",
+            "old": "1.1.0",
+            "next": "1.2.0",
+            "new": "Unreleased",
+        }
+        changelog = (
+            "## [Unreleased]\n\n### Added\n\n- `new` input.\n\n"
+            "## [1.2.0] - 2026-11-02\n\n### Added\n\n- `next` input, and\n"
+            "  `runner:\n  auto`.\n\n## [1.1.0]\n\n### Added\n\n- `old` input.\n"
+        )
+        stand_ins = {"runner": ("auto", "pytest", "`runner: auto`")}
+        valid = (
+            "      x: '1'\n      old: 3\n"
+            "      # Unreleased: examples.yml sets runner: auto.\n"
+            "      runner: pytest\n"
+        )
+
+        def differences(settings, before="", version="1.1.0"):
+            text = (
+                f"{before}jobs:\n  python:\n    uses: o/r/.github/workflows/"
+                f"python-ci.yml@{'0' * 40} # v{version}\n    with:{settings}"
+            )
+            return caller_differences(example, text, added, changelog, stand_ins)
+
+        # Pinned to v1.1.0, as after a release pull request that ships v1.2.0, the
+        # caller leaves out working-directory and the inputs added after v1.1.0.
+        self.assertEqual(differences("\n" + valid), [])
+        # A comment elsewhere in the file does not count for a setting in with:.
+        self.assertEqual(
+            differences("\n" + valid, "other:\n  # Not this.\n  runner: 1\n"), []
+        )
+        for settings, before, version, problem in (
+            (valid.replace("'1'", "'2'"), "", "1.1.0", "x: examples.yml passes '1'"),
+            # A comment does not let a setting differ from the job's.
+            (
+                valid.replace("      x: '1'", "      # Unreleased.\n      x: '2'"),
+                "",
+                "1.1.0",
+                "x: examples.yml passes '1' and the caller '2'",
+            ),
+            # An input added in the pinned release or before is passed.
+            (
+                valid.replace("      old: 3\n", ""),
+                "",
+                "1.1.0",
+                "old: examples.yml passes 3, and the caller leaves it out",
+            ),
+            (valid + "      y: 3\n", "", "1.1.0", "y: examples.yml leaves it out"),
+            (
+                valid + "      working-directory: examples/a\n",
+                "",
+                "1.1.0",
+                "working-directory: the caller runs at the root",
+            ),
+            (
+                valid + "      next: 4\n",
+                "",
+                "1.1.0",
+                "next: its Added in is 1.2.0, so the caller's pinned v1.1.0 rejects",
+            ),
+            (
+                valid + "      new: true\n",
+                "",
+                "1.1.0",
+                "new: its Added in is Unreleased",
+            ),
+            # A stand-in passes only its own value, under its own comment.
+            (
+                valid.replace("pytest", "unittest"),
+                "",
+                "1.1.0",
+                (
+                    "runner: its stand-in replaces 'auto' with 'pytest', but "
+                    "examples.yml passes 'auto' and the caller 'unittest'"
+                ),
+            ),
+            (
+                valid.replace("pytest", "auto"),
+                "",
+                "1.1.0",
+                "runner: its stand-in replaces 'auto' with 'pytest'",
+            ),
+            (
+                valid.replace(
+                    "      # Unreleased: examples.yml sets runner: auto.\n", ""
+                ),
+                "concurrency:\n  # Unreleased.\n  runner: 1\n",
+                "1.1.0",
+                "runner: the caller passes 'pytest' for 'auto' without a comment",
+            ),
+            # Once the pinned release has what the job relies on, the stand-in goes.
+            (
+                valid + "      next: 4\n",
+                "",
+                "1.2.0",
+                (
+                    "runner: no CHANGELOG.md section newer than the pinned v1.2.0 has "
+                    "'`runner: auto`'"
+                ),
+            ),
+        ):
+            with self.subTest(settings=settings, before=before, version=version):
+                problems = differences("\n" + settings, before, version)
+                self.assertEqual(len(problems), 1, problems)
+                self.assertTrue(problems[0].startswith(problem), problems)
+        # A with: in flow style has no comments.
+        self.assertEqual(
+            differences(" {x: '1', old: 3, runner: pytest}\n"),
+            [
+                (
+                    "runner: the caller passes 'pytest' for 'auto' without a comment "
+                    "above it in with: that says Unreleased"
+                )
+            ],
+        )
+        self.assertEqual(
+            caller_differences(
+                example, "jobs:\n  a:\n    uses: o/r/w.yml@v1\n", {}, "", {}
+            ),
+            ["the caller pins no release by commit SHA with a '# vX.Y.Z' comment"],
+        )
+
+    def test_callers_trigger_and_cancel_like_the_quick_start(self):
+        quick_start = load_workflow(quick_start_workflows()[0])
+        for path in sorted(ROOT.glob("examples/*/.github/workflows/*")):
+            caller = load_workflow(path.read_text(encoding="utf-8"))
+            with self.subTest(caller=path.relative_to(ROOT).as_posix()):
+                for key in ("on", "permissions", "concurrency"):
+                    self.assertEqual(caller[key], quick_start[key], key)
