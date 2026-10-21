@@ -22,6 +22,8 @@ updates:
       default-days: 7
     # requirements-dev.in pins these at the versions the build step in steps.py
     # installs, and a test checks they agree, so they change together with steps.py.
+    # pytest and uv stay in: their updates fail a test until the pytest-version or
+    # uv-version default in python-ci.yml is reviewed.
     ignore:
       - dependency-name: build
       - dependency-name: twine

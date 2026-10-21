@@ -1,7 +1,12 @@
+# The pytest-version and uv-version defaults in python-ci.yml. A test checks they
+# agree, so an update of either fails until the default is reviewed.
 pytest==9.1.1
+uv==0.13.4
+
 pytest-xdist==3.8.0
 pyyaml==6.0.3
 types-pyyaml==6.0.12.20260906
+
 # The versions the build step in steps.py installs; change them together. Installed
 # up front, they keep parallel test workers from installing them at the same time.
 build==1.6.1
