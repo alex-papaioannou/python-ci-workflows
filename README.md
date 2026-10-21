@@ -310,6 +310,70 @@ To serialize or cancel whole caller runs instead, set `concurrency:` on the call
 workflow itself, for example
 `concurrency: {group: ci-${{ github.ref }}, cancel-in-progress: true}`.
 
+### Adding setup steps
+
+A job that calls a reusable workflow cannot add steps to it. For setup your tests
+need, such as a system package, a headless display or a local database, add a
+composite action to your repository at
+`.github/actions/python-ci-pre-test/action.yml` (`action.yml`, not `action.yaml`).
+When that file exists, every matrix cell runs the action after `Validate inputs`, so
+bad configuration still fails before any of your code runs, and before installing
+dependencies, so system libraries are there when an sdist builds.
+
+The workflow passes the action these inputs. Declare all four, even those you do not
+use, because the runner warns about inputs an action does not declare:
+
+- `python-version`: the cell's `python-versions` entry, such as `3.13` or `3.14t`.
+- `os`: the cell's `operating-systems` entry as JSON, such as `"ubuntu-latest"`,
+  quotes included. To tell operating systems apart, use `runner.os` instead.
+- `working-directory`: the call's `working-directory`.
+- `call-name`: the call's `call-name`, empty unless you set it.
+
+The action's steps run in the root of the checkout, not in `working-directory`, with
+the `env` input's variables set and the cell's Python on `PATH`, so `shell: python`
+works too. A step can write to `GITHUB_ENV` and `GITHUB_PATH` to set variables and
+`PATH` entries for the install, the checks and the tests; leave alone the names the
+`env` input rejects, which the workflow uses itself. When the action fails, the cell
+skips the install, the checks and the tests, and the job summary's table shows the
+hook's failure. This example installs Graphviz with apt, Homebrew or Chocolatey,
+depending on `runner.os`:
+
+```yaml
+name: Pre-test setup
+description: Installs the system packages the tests need.
+inputs:
+  python-version:
+    description: The matrix cell's python-versions entry
+  os:
+    description: The matrix cell's operating-systems entry, as JSON
+  working-directory:
+    description: The call's working-directory
+  call-name:
+    description: The call's call-name
+runs:
+  using: composite
+  steps:
+    - if: runner.os == 'Linux'
+      shell: bash
+      run: sudo apt-get update && sudo apt-get install --yes graphviz
+    - if: runner.os == 'macOS'
+      shell: bash
+      run: brew install graphviz
+    - if: runner.os == 'Windows'
+      shell: pwsh
+      run: choco install graphviz --yes --no-progress
+```
+
+A repository has one hook, and every call of the workflow runs it. A monorepo that
+calls the workflow once per project branches on the call, for example with
+`if: inputs.working-directory == 'services/api'` on a step. The path and the inputs
+change only in a major release. The hook is your code, from the same checkout as your
+tests, and runs with the same trust; see [SECURITY.md](SECURITY.md). Unlike your
+tests, it can use actions that restore an Actions cache, such as `actions/cache`. In
+a call with `upload-dist` the workflow restores no cache, so that no cache entry
+reaches the distributions you publish; have the hook restore none in that call
+either.
+
 ### The primary cell
 
 Ruff, pip-audit, the package build and the wheel test run once per call, on the
@@ -372,24 +436,26 @@ where noted.
    runner for `test-runner: auto`, and uv as the installer for a `uv.lock` or
    `pylock.toml`. Bad configuration fails here, before any project code runs. Once
    every input is valid, set the `env` variables for the steps that follow.
-4. Install requirements and the project, then audit them.
-5. Run Ruff, then mypy.
-6. Byte-compile `compile-paths`.
-7. Build and check the package, and optionally test the built wheel, once per run
+4. Run your repository's pre-test hook, `.github/actions/python-ci-pre-test`, when
+   it has one (see [Adding setup steps](#adding-setup-steps)).
+5. Install requirements and the project, then audit them.
+6. Run Ruff, then mypy.
+7. Byte-compile `compile-paths`.
+8. Build and check the package, and optionally test the built wheel, once per run
    on the primary cell. Upload `dist` when `upload-dist` is set.
-8. Run unittest or pytest, optionally under coverage, and write reports. The tests
-   depend only on validation and installation, so they also run after lint, type,
-   compile and build failures and after a failed audit. The job still fails then,
-   and nothing is uploaded as `dist`.
-9. Upload JUnit and coverage artifacts, even when tests fail.
-10. Add a table to the job summary, so it shows which check failed. It has one row
-    each for validation, installation, the audit, Ruff, mypy, the syntax check, the
-    build, the test tools and the tests, with the tool versions you asked for. The
-    outcome is success, failure, skipped, or "not enabled" when its input is unset.
-    On the other cells, the audit, Ruff and the build read "skipped (runs on the
-    primary cell)". The syntax check and the build still need every earlier step to
-    succeed, so they read skipped after a failed check. The table is written
-    whenever validation ran.
+9. Run unittest or pytest, optionally under coverage, and write reports. The tests
+   depend only on validation, the pre-test hook and installation, so they also run
+   after lint, type, compile and build failures and after a failed audit. The job
+   still fails then, and nothing is uploaded as `dist`.
+10. Upload JUnit and coverage artifacts, even when tests fail.
+11. Add a table to the job summary, so it shows which check failed. It has one row
+    each for validation, the pre-test hook, installation, the audit, Ruff, mypy, the
+    syntax check, the build, the test tools and the tests, with the tool versions
+    you asked for. The outcome is success, failure, skipped, or "not enabled" when
+    its input is unset or, for the hook, the repository has none. On the other
+    cells, the audit, Ruff and the build read "skipped (runs on the primary cell)".
+    The syntax check and the build still need every earlier step to succeed, so they
+    read skipped after a failed check. The table is written whenever validation ran.
 
 Third-party actions are pinned to full commit SHAs, and tool versions are pinned
 explicitly. The step scripts are fetched at the same commit as the workflow, without
@@ -399,15 +465,16 @@ self-hosted runner on version 2.336.0 or newer.
 ## Security posture
 
 - Third-party actions are pinned to a full commit SHA, and the step scripts load from
-  this repository at the commit of the workflow.
+  this repository at the commit of the workflow. The only other action is your own
+  [pre-test hook](#adding-setup-steps), from your checkout.
 - Jobs request only `permissions: contents: read`, and no job widens it.
 - No secrets: the workflow references neither `secrets` nor `github.token`, and
   declares no secrets for a caller to pass.
 - Checkout runs with `persist-credentials: false`, so no token is left in the Git
   configuration for project code to read.
 - Inputs reach the step scripts only through environment variables: no `run:` script
-  contains a `${{ }}` expression. No project code runs before the `Validate inputs`
-  step.
+  contains a `${{ }}` expression. No project code, the pre-test hook included, runs
+  before the `Validate inputs` step.
 - `requirements-file` installs are hash-checked by default (`require-hashes`).
 - In a call with `upload-dist`, setup-python restores and saves no pip cache. The
   workflow declares no `cache-mode`, so it runs under the one your calling job sets.
@@ -508,7 +575,9 @@ request:
   `installer`, and audited.
 
 They double as copy-and-paste starting points. This repository's CI also calls the
-workflow on itself on Linux, Windows and macOS with most features enabled, and lints the workflow files with actionlint and zizmor. See
+workflow on itself on Linux, Windows and macOS with most features enabled, including
+a pre-test hook that sets a variable a test checks on every cell, and lints the
+workflow files with actionlint and zizmor. See
 [CONTRIBUTING.md](CONTRIBUTING.md) for conventions and [CHANGELOG.md](CHANGELOG.md)
 for release history.
 

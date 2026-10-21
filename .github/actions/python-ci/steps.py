@@ -485,6 +485,7 @@ WORKFLOW_VARIABLES = {
     "MYPY_OUTCOME",
     "MYPY_VERSION",
     "OPERATING_SYSTEMS",
+    "PRE_TEST_OUTCOME",
     "PRIMARY",
     "PROJECT_EXTRAS",
     "PYTEST_ARGS",
@@ -1596,12 +1597,18 @@ def tool_versions(*tools: tuple[str, str]) -> str:
     return ", ".join(f"{name} {version}" for name, version in tools if version)
 
 
+# The caller's pre-test hook, relative to the checkout root. python-ci.yml runs it
+# when this file exists there.
+PRE_TEST_HOOK = ".github/actions/python-ci-pre-test/action.yml"
+
+
 def checks() -> int:
     """Summarise the outcome of every check of this matrix cell.
 
     The tests run even after a lint, type, syntax or build check fails, so this
-    table is what records which check failed. A step whose input leaves it off is
-    "not enabled" rather than skipped. The step never fails the job itself.
+    table is what records which check failed. A step whose input leaves it off, or
+    the pre-test hook when the caller has none, is "not enabled" rather than
+    skipped. The step never fails the job itself.
     """
     runner = env("TEST_RUNNER")
     uv_version = env("UV_VERSION") if env("INSTALLER") == "uv" else ""
@@ -1613,6 +1620,13 @@ def checks() -> int:
     # on the primary cell only, and the tool versions the caller asked for.
     rows = [
         ("Validate inputs", env("VALIDATE_OUTCOME"), True, False, ""),
+        (
+            "Run the pre-test hook",
+            env("PRE_TEST_OUTCOME"),
+            Path(env("GITHUB_WORKSPACE") or os.getcwd(), PRE_TEST_HOOK).is_file(),
+            False,
+            "",
+        ),
         (
             "Install dependencies",
             env("INSTALL_OUTCOME"),

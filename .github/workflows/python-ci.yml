@@ -258,6 +258,20 @@ jobs:
           DOCTEST_PATHS: ${{ inputs.doctest-paths }}
           CALLER_ENV: ${{ inputs.env }}
         run: python "$PYTHON_CI_STEPS" validate
+      - name: Run the pre-test hook
+        id: pre-test
+        # The caller's own action, for setup a calling job cannot add as steps. It
+        # runs after validation, so bad configuration fails before any caller code,
+        # and before installation, so system libraries are there for sdist builds.
+        # An action reference cannot be an expression, so the path is fixed. It must
+        # stay "./", which resolves in the caller's checkout, not "$/", this repository.
+        if: hashFiles('.github/actions/python-ci-pre-test/action.yml') != ''
+        uses: ./.github/actions/python-ci-pre-test # zizmor: ignore[self-repository]
+        with:
+          python-version: ${{ matrix.python-version }}
+          os: ${{ toJSON(matrix.os) }}
+          working-directory: ${{ inputs.working-directory }}
+          call-name: ${{ inputs.call-name }}
       - name: Install dependencies
         id: install
         if: inputs.requirements-file != '' || inputs.install-project
@@ -321,10 +335,10 @@ jobs:
           if-no-files-found: error
       - name: Install test tools
         id: test-tools
-        # The tests depend only on validation and installation, so a failed lint, type,
-        # syntax or build check still leaves test results; 'Summarise checks' records
-        # which check failed.
-        if: ${{ !cancelled() && steps.validate.outcome == 'success' && steps.install.outcome != 'failure' && (inputs.coverage-version != '' || steps.validate.outputs.test-runner == 'pytest') }}
+        # The tests depend only on validation, the pre-test hook and installation, so a
+        # failed lint, type, syntax or build check still leaves test results;
+        # 'Summarise checks' records which check failed.
+        if: ${{ !cancelled() && steps.validate.outcome == 'success' && steps.pre-test.outcome != 'failure' && steps.install.outcome != 'failure' && (inputs.coverage-version != '' || steps.validate.outputs.test-runner == 'pytest') }}
         env:
           COVERAGE_VERSION: ${{ inputs.coverage-version }}
           TEST_RUNNER: ${{ steps.validate.outputs.test-runner }}
@@ -332,7 +346,7 @@ jobs:
         run: python "$PYTHON_CI_STEPS" install-test-tools
       - name: Run tests and reject empty test suites
         id: test
-        if: ${{ !cancelled() && steps.validate.outcome == 'success' && steps.install.outcome != 'failure' && steps.test-tools.outcome != 'failure' }}
+        if: ${{ !cancelled() && steps.validate.outcome == 'success' && steps.pre-test.outcome != 'failure' && steps.install.outcome != 'failure' && steps.test-tools.outcome != 'failure' }}
         env:
           TEST_DIRECTORY: ${{ inputs.test-directory }}
           TEST_PATTERN: ${{ inputs.test-pattern }}
@@ -368,6 +382,7 @@ jobs:
         working-directory: ${{ github.workspace }}
         env:
           VALIDATE_OUTCOME: ${{ steps.validate.outcome }}
+          PRE_TEST_OUTCOME: ${{ steps.pre-test.outcome }}
           INSTALL_OUTCOME: ${{ steps.install.outcome }}
           AUDIT_OUTCOME: ${{ steps.audit.outcome }}
           RUFF_OUTCOME: ${{ steps.ruff.outcome }}

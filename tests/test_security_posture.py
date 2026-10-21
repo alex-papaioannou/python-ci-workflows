@@ -13,6 +13,7 @@ ROOT = Path(__file__).parents[1]
 WORKFLOW = ROOT / ".github/workflows/python-ci.yml"
 ACTION = ROOT / ".github/actions/python-ci/action.yml"
 STEP_SCRIPTS = "$/.github/actions/python-ci"
+PRE_TEST_HOOK = "./.github/actions/python-ci-pre-test"
 
 # Expression names ignore case. Besides secrets.X, a declared or inherited secrets:
 # block, this matches github.token, github['token'] and the whole github context
@@ -117,15 +118,22 @@ class SecurityPostureTests(unittest.TestCase):
         self.assertIs(inputs["require-hashes"]["default"], True)
 
     def test_actions_are_pinned_to_commit_shas(self):
-        # "./" would resolve in the caller's checkout; "$/" is this repository at the
-        # commit of the workflow. A job's own uses: calls a reusable workflow.
+        # "./" resolves in the caller's checkout, so the only such reference is the
+        # caller's own pre-test hook; "$/" is this repository at the commit of the
+        # workflow. A job's own uses: calls a reusable workflow.
         references = [(where, step.get("uses")) for where, step in steps()]
         references += [
             (f"{WORKFLOW.name} / {name}", job.get("uses"))
             for name, job in self.workflow["jobs"].items()
         ]
+        local = [
+            (where, uses) for where, uses in references if (uses or "")[:2] == "./"
+        ]
+        self.assertEqual(
+            local, [(f"{WORKFLOW.name} / test / Run the pre-test hook", PRE_TEST_HOOK)]
+        )
         for where, uses in references:
-            if uses and not uses.startswith("$/"):
+            if uses and uses[:2] not in ("$/", "./"):
                 with self.subTest(uses=where):
                     self.assertRegex(uses, r"@[0-9a-f]{40}$")
 

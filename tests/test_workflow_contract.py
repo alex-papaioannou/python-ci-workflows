@@ -11,6 +11,7 @@ import shlex
 import shutil
 import subprocess
 import sys
+import sysconfig
 import tempfile
 import unittest
 import unittest.mock
@@ -27,6 +28,8 @@ STEPS = ROOT / ".github/actions/python-ci/steps.py"
 SMOKE = ROOT / ".github/workflows/ci.yml"
 EXAMPLES = ROOT / ".github/workflows/examples.yml"
 DEV_REQUIREMENTS = ROOT / "requirements-dev.txt"
+# The caller's pre-test hook, relative to the root of the caller's checkout.
+PRE_TEST_HOOK = ".github/actions/python-ci-pre-test/action.yml"
 
 # Variables the workflow sets from its inputs and step results. Inner runs must not
 # inherit them from the outer environment (this repository's own CI sets several for
@@ -2618,12 +2621,18 @@ class CheckSummaryTests(StepHarness, unittest.TestCase):
         return yaml.safe_load(WORKFLOW.read_text())["jobs"]["test"]["steps"]
 
     @unittest.skipUnless(yaml, "needs PyYAML")
-    def test_tests_depend_only_on_validation_and_installation(self):
+    def test_tests_depend_only_on_validation_the_hook_and_installation(self):
         steps = {step.get("name"): step for step in self.job_steps()}
         gate = (
             "!cancelled() && steps.validate.outcome == 'success' && "
+            "steps.pre-test.outcome != 'failure' && "
             "steps.install.outcome != 'failure'"
         )
+        # A failed pre-test hook skips the installation through its implicit
+        # success(), which leaves the installation's outcome at skipped, so the test
+        # tools and the tests check the hook's outcome themselves.
+        install = steps["Install dependencies"]["if"]
+        self.assertIsNone(STATUS_FUNCTION.search(install), install)
         tools = expression(steps["Install test tools"]["if"])
         self.assertTrue(tools.startswith(gate + " && "), tools)
         self.assertIn(
@@ -2656,6 +2665,7 @@ class CheckSummaryTests(StepHarness, unittest.TestCase):
             ids,
             {
                 "Validate inputs": "validate",
+                "Run the pre-test hook": "pre-test",
                 "Install dependencies": "install",
                 "Audit dependencies": "audit",
                 "Lint with Ruff": "ruff",
@@ -2674,12 +2684,12 @@ class CheckSummaryTests(StepHarness, unittest.TestCase):
             outcomes, sorted(f"${{{{ steps.{id_}.outcome }}}}" for id_ in ids.values())
         )
 
-    def summary_rows(self, env):
+    def summary_rows(self, env, files=None):
         """Run the summary step and return its table rows as (check, outcome, version)."""
         with tempfile.TemporaryDirectory() as out:
             summary = Path(out) / "summary.md"
             result = self.execute(
-                {},
+                files or {},
                 {**env, "GITHUB_STEP_SUMMARY": str(summary)},
                 step="Summarise checks",
             )
@@ -2699,6 +2709,7 @@ class CheckSummaryTests(StepHarness, unittest.TestCase):
         rows = self.summary_rows(
             {
                 "VALIDATE_OUTCOME": "success",
+                "PRE_TEST_OUTCOME": "success",
                 "INSTALL_OUTCOME": "success",
                 "REQUIREMENTS_FILE": "requirements.txt",
                 "INSTALLER": "uv",
@@ -2725,6 +2736,7 @@ class CheckSummaryTests(StepHarness, unittest.TestCase):
             rows,
             [
                 ("Validate inputs", "success", ""),
+                ("Run the pre-test hook", "success", ""),
                 ("Install dependencies", "success", "uv 0.13.4"),
                 ("Audit dependencies", "success", "pip-audit 2.10.1"),
                 ("Lint with Ruff", "success", "Ruff 0.17.0"),
@@ -2740,6 +2752,7 @@ class CheckSummaryTests(StepHarness, unittest.TestCase):
         skipped = {
             name: "skipped"
             for name in (
+                "PRE_TEST_OUTCOME",
                 "INSTALL_OUTCOME",
                 "AUDIT_OUTCOME",
                 "RUFF_OUTCOME",
@@ -2768,6 +2781,7 @@ class CheckSummaryTests(StepHarness, unittest.TestCase):
             rows,
             [
                 ("Validate inputs", "success", ""),
+                ("Run the pre-test hook", "not enabled", ""),
                 ("Install dependencies", "not enabled", ""),
                 ("Audit dependencies", "not enabled", ""),
                 ("Lint with Ruff", once, "Ruff 0.17.0"),
@@ -2793,6 +2807,7 @@ class CheckSummaryTests(StepHarness, unittest.TestCase):
             rows,
             [
                 ("Validate inputs", "failure", ""),
+                ("Run the pre-test hook", "not enabled", ""),
                 ("Install dependencies", "not enabled", ""),
                 ("Audit dependencies", "not enabled", ""),
                 ("Lint with Ruff", "not enabled", ""),
@@ -2802,6 +2817,29 @@ class CheckSummaryTests(StepHarness, unittest.TestCase):
                 ("Install test tools", "skipped", ""),
                 ("Run tests and reject empty test suites", "skipped", ""),
             ],
+        )
+
+    def test_the_hook_row_reads_not_enabled_only_without_a_hook(self):
+        hook = ("Run the pre-test hook",)
+        # After a failed validation, the hook is skipped whether or not it exists.
+        failed = {"VALIDATE_OUTCOME": "failure", "PRE_TEST_OUTCOME": "skipped"}
+        for files, outcome in (({}, "not enabled"), ({PRE_TEST_HOOK: ""}, "skipped")):
+            with self.subTest(outcome=outcome):
+                rows = self.summary_rows(failed, files)
+                self.assertEqual(rows[1], (*hook, outcome, ""))
+        # A failed hook skips the installation through its implicit success().
+        rows = self.summary_rows(
+            {
+                "VALIDATE_OUTCOME": "success",
+                "PRE_TEST_OUTCOME": "failure",
+                "INSTALL_OUTCOME": "skipped",
+                "REQUIREMENTS_FILE": "requirements.txt",
+            },
+            {PRE_TEST_HOOK: ""},
+        )
+        self.assertEqual(
+            rows[1:3],
+            [(*hook, "failure", ""), ("Install dependencies", "skipped", "")],
         )
 
     def test_a_version_the_console_cannot_encode_still_gets_a_table(self):
@@ -2824,6 +2862,100 @@ class CheckSummaryTests(StepHarness, unittest.TestCase):
             text = summary.read_text(encoding="utf-8")
         self.assertIn("| Type-check with mypy | skipped | mypy \u22651.11 |", text)
         self.assertIn("| Type-check with mypy | skipped | mypy ?1.11 |", result.stdout)
+
+
+class PreTestHookTests(unittest.TestCase):
+    """The caller's own action adds the setup a calling job cannot add as steps."""
+
+    def hook(self):
+        """Return the test job's step names and the step that runs the hook."""
+        steps = yaml.safe_load(WORKFLOW.read_text())["jobs"]["test"]["steps"]
+        names = [step.get("name") for step in steps]
+        return names, steps[names.index("Run the pre-test hook")]
+
+    @unittest.skipUnless(yaml, "needs PyYAML")
+    def test_the_hook_runs_after_validation_and_before_installation(self):
+        names, step = self.hook()
+        # After validation, so bad configuration fails before any caller code runs,
+        # and before installation, so system libraries are there for sdist builds.
+        index = names.index("Run the pre-test hook")
+        self.assertEqual(
+            names[index - 1 : index + 2],
+            ["Validate inputs", "Run the pre-test hook", "Install dependencies"],
+        )
+        self.assertEqual(step["id"], "pre-test")
+        # Only when the caller has a hook. No status function, so the implicit
+        # success() skips it after a failed validation.
+        self.assertEqual(step["if"], f"hashFiles('{PRE_TEST_HOOK}') != ''")
+        # "./" resolves in the caller's checkout, where hashFiles looked.
+        self.assertEqual(step["uses"], "./.github/actions/python-ci-pre-test")
+        self.assertEqual(
+            step["with"],
+            {
+                "python-version": "${{ matrix.python-version }}",
+                "os": "${{ toJSON(matrix.os) }}",
+                "working-directory": "${{ inputs.working-directory }}",
+                "call-name": "${{ inputs.call-name }}",
+            },
+        )
+        self.assertEqual(load_steps().PRE_TEST_HOOK, PRE_TEST_HOOK)
+
+    @unittest.skipUnless(yaml, "needs PyYAML")
+    def test_this_repositorys_hook_declares_every_input_it_is_given(self):
+        # The runner warns about an input that the action does not declare.
+        _, step = self.hook()
+        action = yaml.safe_load((ROOT / PRE_TEST_HOOK).read_text(encoding="utf-8"))
+        self.assertEqual(action["runs"]["using"], "composite")
+        self.assertEqual(set(action["inputs"]), set(step["with"]))
+
+    @unittest.skipUnless(
+        os.environ.get("GITHUB_ACTIONS") == "true", "only GitHub Actions runs the hook"
+    )
+    def test_this_repositorys_hook_ran_before_the_tests(self):
+        # The hook sets this to the cell's python-versions entry, such as 3.14t, on
+        # every cell of the smoke job.
+        running = f"{sys.version_info.major}.{sys.version_info.minor}"
+        if sysconfig.get_config_var("Py_GIL_DISABLED"):
+            running += "t"
+        self.assertEqual(os.environ.get("PYTHON_CI_PRE_TEST_PYTHON"), running)
+
+    @unittest.skipUnless(yaml, "needs PyYAML")
+    def test_the_hook_is_documented(self):
+        _, step = self.hook()
+        readme = (ROOT / "README.md").read_text(encoding="utf-8")
+        section = re.search(r"(?ms)^### Adding setup steps\n(.*?)^#", readme)
+        self.assertIsNotNone(section)
+        words = " ".join(section.group(1).split())
+        phrases = [f"`{PRE_TEST_HOOK}`", "`runner.os`", "`GITHUB_ENV`", "`GITHUB_PATH`"]
+        phrases += [f"- `{name}`:" for name in step["with"]]
+        phrases += ["apt-get install", "brew install", "choco install"]
+        phrases += ["inputs.working-directory", "](SECURITY.md)"]
+        # Unlike test code, a hook can restore an Actions cache, which would undo
+        # the no-cache rule of a call with upload-dist.
+        phrases += ["`actions/cache`", "`upload-dist`"]
+        for phrase in phrases:
+            with self.subTest(phrase=phrase):
+                self.assertIn(phrase, words)
+        steps = markdown_section("README.md", "How it runs")
+        self.assertIn("](#adding-setup-steps)", steps)
+        security = (ROOT / "SECURITY.md").read_text(encoding="utf-8")
+        bullet = re.search(r"(?ms)^- The pre-test hook, (.*?)(?=^- |^#|\Z)", security)
+        self.assertIsNotNone(bullet)
+        words = " ".join(bullet.group(1).split())
+        for phrase in (
+            f"`{PRE_TEST_HOOK}`",
+            "same trust as your test code",
+            "`github.token`",
+            "Actions caches",
+            "`upload-dist`",
+            "`cache-mode`",
+        ):
+            with self.subTest(file="SECURITY.md", phrase=phrase):
+                self.assertIn(phrase, words)
+        interface = " ".join(
+            markdown_section("CONTRIBUTING.md", "Public interface").split()
+        )
+        self.assertIn(f"`{PRE_TEST_HOOK}`", interface)
 
 
 def load_steps():
