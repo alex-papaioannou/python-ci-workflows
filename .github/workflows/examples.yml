@@ -35,6 +35,8 @@ jobs:
       # Shares ubuntu-latest cells with stdlib-app, so artifact names must differ.
       junit-file: test-results/junit.xml
       coverage-version: "7.16.2"
+      # The tests check that this two-line value reaches them on both systems.
+      env: '{"GREETING_EXAMPLE": "line one\nline two"}'
   uv-project:
     uses: ./.github/workflows/python-ci.yml
     with:

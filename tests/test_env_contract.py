@@ -177,6 +177,27 @@ def steps_reads(source=None):
     }
 
 
+def steps_constant(name):
+    """Return the literal value that steps.py assigns to a module-level name."""
+    for node in ast.parse(STEPS.read_text(encoding="utf-8")).body:
+        if isinstance(node, ast.Assign) and any(
+            getattr(target, "id", None) == name for target in node.targets
+        ):
+            return ast.literal_eval(node.value)
+    raise AssertionError(f"steps.py does not assign {name}")
+
+
+def workflow_variables():
+    """Return every variable that python-ci.yml sets in a job's or a step's env block."""
+    workflow = yaml.safe_load(WORKFLOW.read_text(encoding="utf-8"))
+    return {
+        name
+        for job in workflow["jobs"].values()
+        for block in (job, *job.get("steps", []))
+        for name in block.get("env", {})
+    }
+
+
 def workflow_steps():
     """Yield (job, step name, subcommand, env keys) for steps that run steps.py."""
     workflow = yaml.safe_load(WORKFLOW.read_text(encoding="utf-8"))
@@ -224,6 +245,20 @@ class EnvContractTests(unittest.TestCase):
     def test_every_subcommand_is_used_by_the_workflow(self):
         used = {command for _, _, command, _ in workflow_steps()}
         self.assertEqual(set(steps_reads()) - used, set())
+
+    def test_the_env_input_cannot_set_a_variable_the_workflow_sets(self):
+        # GITHUB_ENV overrides job-level env and reaches every step that does not map
+        # the name itself, so the validate step rejects these names in env.
+        listed = steps_constant("WORKFLOW_VARIABLES")
+        reserved = listed | set(steps_constant("RESERVED_ENV"))
+        mapped = {name.upper() for name in workflow_variables()}
+        self.assertEqual(
+            mapped - reserved,
+            set(),
+            "python-ci.yml maps these, but WORKFLOW_VARIABLES in steps.py lacks them",
+        )
+        # Nothing else, so env may set any name the workflow does not use.
+        self.assertEqual(listed - mapped, set())
 
 
 PRELUDE = """
