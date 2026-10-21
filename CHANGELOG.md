@@ -7,6 +7,7 @@ major tag such as `v1`, an exact release, or a commit SHA.
 
 ### Added
 
+- An MIT license. The example projects declare it too, so they can be copied freely.
 - `call-name` input to tell apart several calls from one caller workflow.
 - `matrix-exclude` input to skip matrix cells, validated against the matrix with
   GitHub's matching rules.
