@@ -107,7 +107,10 @@ class StepHarness:
             for name, content in files.items():
                 path = root / name
                 path.parent.mkdir(parents=True, exist_ok=True)
-                path.write_text(content)
+                if isinstance(content, bytes):
+                    path.write_bytes(content)
+                else:
+                    path.write_text(content)
             return self.run_step(
                 root, step, env, executable, cwd=root / working_directory
             )
@@ -1108,6 +1111,322 @@ class PytestRunnerTests(StepHarness, unittest.TestCase):
         ):
             result = self.execute({"tests/test_ok.py": ""}, env, step="Validate inputs")
             self.assertNotEqual(result.returncode, 0, env)
+
+
+AUTO = {"TEST_RUNNER": "auto", "PYTEST_VERSION": "9.1.1"}
+
+
+class AutoRunnerTests(StepHarness, unittest.TestCase):
+    """test-runner: auto, and pointing unittest users with pytest tests at pytest."""
+
+    def choose(self, files, env):
+        """Run validation; return its test-runner output, log and job summary."""
+        with tempfile.TemporaryDirectory() as out:
+            output, summary = Path(out) / "output", Path(out) / "summary.md"
+            summary.touch()  # as the runner does before each step
+            result = self.execute(
+                {"tests/test_ok.py": "", **files},
+                {
+                    **env,
+                    "GITHUB_OUTPUT": str(output),
+                    "GITHUB_STEP_SUMMARY": str(summary),
+                },
+                step="Validate inputs",
+            )
+            self.assertEqual(result.returncode, 0, result.stderr)
+            values = dict(
+                line.split("=", 1)
+                for line in output.read_text(encoding="utf-8").splitlines()
+            )
+            return (
+                values["test-runner"],
+                result.stdout,
+                summary.read_text(encoding="utf-8"),
+            )
+
+    def test_auto_picks_pytest_for_each_signal(self):
+        pyproject = '[project]\nname = "x"\nversion = "1"\n\n'
+        signals = {
+            "pytest.toml": ({"pytest.toml": "[pytest]\n"}, {}, "found pytest.toml"),
+            ".pytest.toml": ({".pytest.toml": "[pytest]\n"}, {}, "found .pytest.toml"),
+            "pytest.ini": ({"pytest.ini": "[pytest]\n"}, {}, "found pytest.ini"),
+            ".pytest.ini": ({".pytest.ini": "[pytest]\n"}, {}, "found .pytest.ini"),
+            "[tool.pytest]": (
+                {"pyproject.toml": pyproject + '[tool.pytest]\nminversion = "9.0"\n'},
+                {},
+                "found [tool.pytest] in pyproject.toml",
+            ),
+            "[tool.pytest.ini_options]": (
+                {"pyproject.toml": "[tool.pytest.ini_options]\nxfail_strict = true\n"},
+                {},
+                "found [tool.pytest.ini_options] in pyproject.toml",
+            ),
+            "tox.ini": (
+                {"tox.ini": "[tox]\nenv_list = py3\n\n[pytest]\naddopts = -ra\n"},
+                {},
+                "found [pytest] in tox.ini",
+            ),
+            "tox.ini header with a comment": (
+                {"tox.ini": "[pytest]  # options for pytest\naddopts = -ra\n"},
+                {},
+                "found [pytest] in tox.ini",
+            ),
+            "setup.cfg": (
+                {"setup.cfg": "[metadata]\nname = x\n\n[tool:pytest]\naddopts = -ra\n"},
+                {},
+                "found [tool:pytest] in setup.cfg",
+            ),
+            "conftest.py in working-directory": (
+                {"conftest.py": ""},
+                {},
+                "found conftest.py",
+            ),
+            "conftest.py in test-directory": (
+                {"checks/conftest.py": ""},
+                {"TEST_DIRECTORY": "checks"},
+                "found checks/conftest.py",
+            ),
+            "requirements-file": (
+                {
+                    "requirements-dev.txt": "iniconfig==2.1.0 \\\n    --hash=sha256:00\n"
+                    "PyTest==9.1.1 \\\n    --hash=sha256:01\n"
+                },
+                {"REQUIREMENTS_FILE": "requirements-dev.txt"},
+                "found pytest in requirements-dev.txt",
+            ),
+            "requirements-file with a byte order mark": (
+                {"requirements.txt": "\ufeffpytest==9.1.1\n".encode()},
+                {"REQUIREMENTS_FILE": "requirements.txt"},
+                "found pytest in requirements.txt",
+            ),
+            "[project.optional-dependencies]": (
+                {
+                    "pyproject.toml": pyproject
+                    + '[project.optional-dependencies]\ntest = ["pytest>=8"]\n'
+                },
+                {},
+                "found pytest in [project.optional-dependencies] test",
+            ),
+            "[dependency-groups]": (
+                {
+                    "pyproject.toml": "[dependency-groups]\n"
+                    'dev = [{include-group = "lint"}, "pytest[testing]; python_version >= \'3.11\'"]\n'
+                    'lint = ["ruff"]\n'
+                },
+                {},
+                "found pytest in [dependency-groups] dev",
+            ),
+            "pytest-args": ({}, {"PYTEST_ARGS": "-ra"}, "pytest-args is set"),
+        }
+        for signal, (files, env, reason) in signals.items():
+            with self.subTest(signal=signal):
+                runner, log, summary = self.choose(files, {**AUTO, **env})
+                self.assertEqual(runner, "pytest")
+                line = f"Test runner: pytest (auto: {reason})"
+                self.assertIn(line, log)
+                self.assertIn(line, summary)
+
+    def test_auto_picks_unittest_without_any_signal(self):
+        # Near misses: other pytest-* projects, other tables and tox environments.
+        files = {
+            "pyproject.toml": (
+                '[project]\nname = "x"\nversion = "1"\n\n'
+                '[project.optional-dependencies]\ntest = ["pytest-cov"]\n\n'
+                '[dependency-groups]\ndev = ["pytest-xdist", {include-group = "lint"}]\n'
+                'lint = ["ruff"]\n\n[tool.ruff]\nline-length = 88\n'
+            ),
+            "tox.ini": "[tox]\nenv_list = py3\n\n[testenv:pytest]\ncommands = pytest\n",
+            "setup.cfg": "[metadata]\nname = x\n",
+            "requirements.txt": "pytest-xdist==3.8.0\n# pytest==9.1.1\n",
+            "tests/test_pytest_style.py": "def test_a():\n    pass\n",
+        }
+        env = {**AUTO, "REQUIREMENTS_FILE": "requirements.txt", "PYTEST_ARGS": ""}
+        runner, log, summary = self.choose(files, env)
+        self.assertEqual(runner, "unittest")
+        line = (
+            "Test runner: unittest (auto: found no pytest configuration, conftest.py, "
+            "pytest requirement or pytest-args)"
+        )
+        self.assertIn(line, log)
+        self.assertIn(line, summary)
+
+    def test_an_explicit_runner_is_kept_and_reported(self):
+        for env, expected in (
+            ({}, "unittest"),
+            ({"TEST_RUNNER": "unittest"}, "unittest"),
+            (PYTEST, "pytest"),
+        ):
+            with self.subTest(env=env):
+                runner, log, summary = self.choose({"conftest.py": ""}, env)
+                self.assertEqual(runner, expected)
+                self.assertIn(
+                    f"Test runner: {expected} (from the test-runner input)", log
+                )
+                # Only auto writes to the job summary, so existing summaries stay as is.
+                self.assertNotIn("Test runner", summary)
+
+    @unittest.skipUnless(yaml, "needs PyYAML")
+    def test_the_default_stays_unittest(self):
+        inputs = yaml.safe_load(WORKFLOW.read_text())[True]["workflow_call"]["inputs"]
+        self.assertEqual(inputs["test-runner"]["default"], "unittest")
+
+    @unittest.skipUnless(yaml, "needs PyYAML")
+    def test_only_validation_reads_the_test_runner_input(self):
+        jobs = yaml.safe_load(WORKFLOW.read_text())["jobs"]
+        # inputs.test-runner or inputs['test-runner'], as json.dumps escapes quotes.
+        reads = re.compile(
+            r"inputs(\.test-runner|\[\s*\\?['\"]test-runner\\?['\"]\s*\])"
+        )
+        readers = []
+        for job_name, job in jobs.items():
+            for key, value in job.items():
+                if key != "steps" and reads.search(json.dumps(value)):
+                    readers.append(f"{job_name}: {key}")
+            for step in job.get("steps", []):
+                name = step.get("name") or step.get("uses")
+                if name != "Validate inputs" and reads.search(json.dumps(step)):
+                    readers.append(f"{job_name}: {name}")
+        self.assertEqual(readers, [], "these must use the validate step's output")
+        steps = {step.get("name"): step for step in jobs["test"]["steps"]}
+        resolved = "${{ steps.validate.outputs.test-runner }}"
+        for name in (
+            "Build and check package",
+            "Install test tools",
+            "Run tests and reject empty test suites",
+        ):
+            with self.subTest(step=name):
+                self.assertEqual(steps[name]["env"]["TEST_RUNNER"], resolved)
+        self.assertIn(
+            "steps.validate.outputs.test-runner == 'pytest'",
+            steps["Install test tools"]["if"],
+        )
+
+    def test_checks_that_depend_on_the_runner_use_the_resolved_one(self):
+        config = {"pytest.ini": "[pytest]\n"}
+        doctests = {**AUTO, "DOCTEST_PATHS": '["my-scripts/tool.py"]'}
+        cases = (
+            ({**config}, {**AUTO, "PYTEST_VERSION": ""}, "pytest-version must be"),
+            ({}, {**AUTO, "PYTEST_VERSION": ""}, None),
+            # Any pytest-args picks pytest, so the pytest-args check cannot fail.
+            ({}, {**AUTO, "PYTEST_ARGS": " "}, None),
+            # pytest runs doctests in files that unittest cannot import by name.
+            ({**config, "my-scripts/tool.py": ""}, doctests, None),
+            ({"my-scripts/tool.py": ""}, doctests, "no module name for unittest"),
+            (
+                {"pyproject.toml": "[tool.pytest\n"},
+                AUTO,
+                "test-runner: auto could not read pyproject.toml",
+            ),
+            ({}, {"TEST_RUNNER": "nose"}, "must be unittest, pytest or auto"),
+        )
+        for files, env, error in cases:
+            with self.subTest(files=files, env=env):
+                result = self.execute(
+                    {"tests/test_ok.py": "", **files}, env, step="Validate inputs"
+                )
+                if error is None:
+                    self.assertEqual(result.returncode, 0, result.stderr)
+                else:
+                    self.assertNotEqual(result.returncode, 0)
+                    self.assertIn(error, result.stderr)
+
+    def test_unittest_points_pytest_style_tests_at_pytest(self):
+        # auto is offered only where it would pick pytest; test functions alone are
+        # not one of its signals.
+        pytest_only = "set test-runner: pytest."
+        or_auto = "set test-runner: pytest (or auto)."
+        cases = {
+            "module-level test function": (
+                {"tests/test_a.py": "def test_a():\n    assert 1 == 1\n"},
+                {},
+                "tests/test_a.py defines test_a()",
+                pytest_only,
+            ),
+            "async test in a directory unittest does not enter": (
+                {
+                    "tests/test_none.py": "",
+                    "tests/unit/test_b.py": "async def test_b():\n    pass\n",
+                },
+                {},
+                "tests/unit/test_b.py defines test_b()",
+                pytest_only,
+            ),
+            "custom test-pattern": (
+                {"tests/check_c.py": "def test_c():\n    pass\n"},
+                {"TEST_PATTERN": "check_*.py"},
+                "tests/check_c.py defines test_c()",
+                pytest_only,
+            ),
+            "pytest configuration": (
+                {
+                    "tests/test_none.py": "",
+                    "pyproject.toml": "[tool.pytest.ini_options]\nxfail_strict = true\n",
+                },
+                {},
+                "found [tool.pytest.ini_options] in pyproject.toml",
+                or_auto,
+            ),
+            "test function and a conftest.py": (
+                {"tests/test_a.py": "def test_a():\n    pass\n", "conftest.py": ""},
+                {},
+                "tests/test_a.py defines test_a()",
+                or_auto,
+            ),
+        }
+        for case, (files, env, evidence, advice) in cases.items():
+            with self.subTest(case=case):
+                result = self.execute(files, {"TEST_RUNNER": "unittest", **env})
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn("No tests discovered", result.stderr)
+                self.assertIn(
+                    f"These look like pytest tests ({evidence}); {advice}",
+                    result.stderr,
+                )
+                if advice == pytest_only:
+                    self.assertNotIn("(or auto)", result.stderr)
+
+    def test_no_pytest_hint_without_pytest_style_tests(self):
+        files = {
+            "tests/test_helpers.py": "def helper():\n    pass\n\n\nclass Checks:\n    def test_a(self):\n        pass\n",
+            "tests/other.py": "def test_not_matched():\n    pass\n",
+            "tests/.hidden/test_d.py": "def test_d():\n    pass\n",
+            "tests/__pycache__/test_e.py": "def test_e():\n    pass\n",
+            # Installed packages in a virtual environment ship their own tests.
+            "tests/venv/pyvenv.cfg": "home = /usr/bin\n",
+            "tests/venv/lib/test_f.py": "def test_f():\n    pass\n",
+        }
+        result = self.execute(files, {"TEST_RUNNER": "unittest"})
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("No tests discovered", result.stderr)
+        self.assertNotIn("test-runner: pytest", result.stderr)
+
+    @unittest.skipUnless(importlib.util.find_spec("pytest"), "pytest is not installed")
+    def test_auto_runs_a_pytest_project_that_fails_with_unittest(self):
+        files = {
+            "pyproject.toml": "[tool.pytest.ini_options]\nxfail_strict = true\n",
+            "tests/test_a.py": "def test_x():\n    assert 1 == 1\n",
+        }
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory) / "project"
+            for name, content in files.items():
+                (root / name).parent.mkdir(parents=True, exist_ok=True)
+                (root / name).write_text(content)
+            output = Path(directory) / "output"
+            validate = self.run_step(
+                root, "Validate inputs", {**AUTO, "GITHUB_OUTPUT": str(output)}
+            )
+            self.assertEqual(validate.returncode, 0, validate.stderr)
+            values = dict(
+                line.split("=", 1)
+                for line in output.read_text(encoding="utf-8").splitlines()
+            )
+            tests = "Run tests and reject empty test suites"
+            result = self.run_step(root, tests, {"TEST_RUNNER": values["test-runner"]})
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            self.assertIn("1 passed", result.stdout)
+            default = self.run_step(root, tests, {"TEST_RUNNER": "unittest"})
+            self.assertNotEqual(default.returncode, 0)
+            self.assertIn("set test-runner: pytest (or auto)", default.stderr)
 
 
 class ProjectInstallTests(StepHarness, unittest.TestCase):

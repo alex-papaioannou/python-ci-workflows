@@ -20,6 +20,12 @@ jobs:
     uses: alex-papaioannou/python-ci-workflows/.github/workflows/python-ci.yml@v1
 ```
 
+This runs the tests with `unittest`. For pytest tests, set `test-runner: pytest`
+under `with:`, or `test-runner: auto` to pick pytest when the project has pytest
+configuration, a `conftest.py` in `working-directory` or `test-directory`, or a
+`pytest` requirement in one of the places listed under `test-runner` in
+[Tests](#tests).
+
 A fuller configuration:
 
 ```yaml
@@ -112,9 +118,9 @@ inside the checkout. JSON arrays are passed as strings.
 
 | Input | Type | Default | Description |
 | --- | --- | --- | --- |
-| `test-runner` | string | `unittest` | `unittest` or `pytest`. |
-| `pytest-version` | string | `9.1.1` | pytest version installed when `test-runner` is `pytest`. |
-| `pytest-args` | string | `""` | Extra pytest arguments, split like a shell command line, for example `-m "not slow" -n auto`; `-n` needs pytest-xdist in your `requirements-file`. |
+| `test-runner` | string | `unittest` | `unittest`, `pytest` or `auto`. `auto` reads the project's files, without importing any of its code, and picks pytest when it finds any of: `pytest.toml`, `.pytest.toml`, `pytest.ini` or `.pytest.ini`; a `[tool.pytest]` or `[tool.pytest.ini_options]` table in `pyproject.toml`; `[pytest]` in `tox.ini`; `[tool:pytest]` in `setup.cfg`; `conftest.py` in `working-directory` or `test-directory`; a requirement named `pytest` in a `.txt` `requirements-file`, `[project.optional-dependencies]` or `[dependency-groups]`; or a non-empty `pytest-args`. Otherwise it picks unittest. The validation step logs the runner; with `auto` it also names the file or setting that decided it and adds that line to the job summary. When unittest discovers no tests but a matching test file defines module-level `test_` functions, the error says to set `test-runner: pytest`; when the project has one of the files or settings above, it says to set `test-runner: pytest` or `auto`. |
+| `pytest-version` | string | `9.1.1` | pytest version installed when the test runner is pytest, set directly or picked by `auto`. |
+| `pytest-args` | string | `""` | Extra pytest arguments, split like a shell command line, for example `-m "not slow" -n auto`; `-n` needs pytest-xdist in your `requirements-file`. Needs the pytest runner; with `test-runner: auto`, setting it picks pytest. |
 | `test-directory` | string | `tests` | Directory to discover tests in. Set it to `""` with the pytest runner to use your pytest `testpaths` instead; unittest treats `""` as `tests`. |
 | `test-pattern` | string | `test*.py` | Filename glob for test modules. With pytest it overrides your `python_files` setting, so the default skips `*_test.py` files; set it to `""` to use your pytest configuration and pytest's defaults (`test_*.py` and `*_test.py`). unittest treats `""` as `test*.py`. Discovering zero tests fails the job. |
 | `top-level-directory` | string | `""` | unittest import root for package-based layouts. Ignored by pytest, which reads `rootdir` from its own configuration. |
@@ -260,8 +266,9 @@ are skipped.
 1. Check out the caller's repository without persisting credentials.
 2. Set up Python, with pip's download cache when `requirements-file` or
    `install-project` is set. uv's own cache is not saved between runs.
-3. Validate inputs: paths, JSON arrays, versions, globs and regexes. Bad
-   configuration fails here, before any project code runs.
+3. Validate inputs: paths, JSON arrays, versions, globs and regexes, and choose the
+   test runner for `test-runner: auto`. Bad configuration fails here, before any
+   project code runs.
 4. Install requirements and the project, then audit them.
 5. Run Ruff, then mypy.
 6. Byte-compile `compile-paths`.
@@ -374,8 +381,9 @@ The `examples/` directory holds three small consumer projects that the
 request:
 
 - `stdlib-app`: unittest, doctests, 100% coverage and warnings as errors.
-- `src-package`: a src-layout package with pytest, an editable install with extras,
-  and a package build whose wheel is tested on Linux and Windows.
+- `src-package`: a src-layout package whose pytest tests run through
+  `test-runner: auto`, an editable install with extras, and a package build whose
+  wheel is tested on Linux and Windows.
 - `uv-project`: dependencies locked in `uv.lock`, installed with uv and audited.
 
 They double as copy-and-paste starting points. This repository's CI also calls the
