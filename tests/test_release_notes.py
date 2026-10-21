@@ -1,5 +1,6 @@
 """Tests for the changelog parser that drives the release workflow."""
 
+import collections
 import importlib.util
 import os
 import re
@@ -14,6 +15,52 @@ spec = importlib.util.spec_from_file_location("release_notes", SCRIPT)
 assert spec and spec.loader
 release_notes = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(release_notes)
+ROOT = SCRIPT.parents[2]
+UPGRADE_LINK = re.compile(r"\]\((?:\./)?UPGRADING\.md#([^)\s]*)\)")
+
+
+def github_anchors(markdown):
+    """Return the anchors GitHub gives the headings of a Markdown document."""
+    anchors = set()
+    seen = collections.Counter()
+    for line, fenced in release_notes.fenced_lines(markdown):
+        match = None if fenced else release_notes.ANY_HEADING.fullmatch(line)
+        if not match:
+            continue
+        title = match.group(1).strip().lower()
+        slug = re.sub(r"[^\w\- ]", "", title).replace(" ", "-")
+        anchors.add(f"{slug}-{seen[slug]}" if seen[slug] else slug)
+        seen[slug] += 1
+    return anchors
+
+
+def upgrade_link_problems(changelog, upgrading):
+    """List Breaking changes entries without a link to an UPGRADING.md heading.
+
+    Only the Unreleased section and the newest release section are checked.
+    """
+    checked = []
+    for title, notes in release_notes.sections(changelog):
+        checked.append((title, notes))
+        if title.lower() != "[unreleased]":
+            break
+    anchors = github_anchors(upgrading)
+    problems = []
+    for title, notes in checked:
+        for entry in release_notes.breaking_changes(notes):
+            links = UPGRADE_LINK.findall(entry)
+            if not links:
+                problems.append(
+                    f"Breaking changes entry in '## {title}' does not link to an "
+                    f"UPGRADING.md heading: {entry}"
+                )
+            problems.extend(
+                f"Breaking changes entry in '## {title}' links to UPGRADING.md#"
+                f"{anchor}, which is not a heading in UPGRADING.md: {entry}"
+                for anchor in links
+                if anchor not in anchors
+            )
+    return problems
 
 
 class NewestReleaseTests(unittest.TestCase):
@@ -117,6 +164,7 @@ class IntroducedTests(unittest.TestCase):
 
 class MainTests(unittest.TestCase):
     def run_main(self, changelog, released="", previous=None):
+        """Run the script; return its result, its outputs and the notes it wrote."""
         with tempfile.TemporaryDirectory() as work:
             root = Path(work)
             (root / "CHANGELOG.md").write_text(changelog, encoding="utf-8")
@@ -125,28 +173,346 @@ class MainTests(unittest.TestCase):
             if previous is not None:
                 (root / "previous.md").write_text(previous, encoding="utf-8")
                 args.append("previous.md")
-            env = {**os.environ, "GITHUB_OUTPUT": str(root / "output")}
+            env = {
+                **os.environ,
+                "GITHUB_OUTPUT": str(root / "output"),
+                "GITHUB_SERVER_URL": "https://github.example",
+                "GITHUB_REPOSITORY": "owner/repo",
+            }
             result = subprocess.run(
                 args, cwd=root, env=env, text=True, capture_output=True, check=False
             )
-            output = (
-                (root / "output").read_text(encoding="utf-8")
-                if (root / "output").exists()
+            output, notes = (
+                (root / name).read_text(encoding="utf-8")
+                if (root / name).exists()
                 else ""
+                for name in ("output", "notes.md")
             )
-            return result, output
+            return result, output, notes
 
     def test_outputs_version_major_and_introduced(self):
-        result, output = self.run_main(
+        result, output, notes = self.run_main(
             "## [1.1.0]\n\n- New.\n", "v1.0.0\nv1\n", "## [1.0.0]\n\n- Old.\n"
         )
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(output, "version=1.1.0\nmajor=v1\nintroduced=true\n")
+        self.assertEqual(notes, "- New.\n")
 
     def test_lower_version_fails_before_any_output(self):
-        result, output = self.run_main("## [0.9.0]\n\n- Old.\n", "v1.0.0\n")
+        result, output, notes = self.run_main("## [0.9.0]\n\n- Old.\n", "v1.0.0\n")
         self.assertNotEqual(result.returncode, 0)
-        self.assertEqual(output, "")
+        self.assertEqual((output, notes), ("", ""))
+
+    def test_breaking_changes_need_a_new_major_version_before_any_output(self):
+        for changelog, message in (
+            (
+                "## [1.2.0]\n\n### Breaking changes\n\n- Removed `a`.\n",
+                "release it as 2.0.0",
+            ),
+            ("## [2.0.0]\n\n### Added\n\n- New.\n", "no 'Breaking changes'"),
+        ):
+            with self.subTest(changelog=changelog):
+                result, output, notes = self.run_main(changelog, "v1.1.0\nv1\n")
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn(message, result.stderr)
+                self.assertEqual((output, notes), ("", ""))
+
+    def test_new_major_version_with_breaking_changes_is_released(self):
+        result, output, _ = self.run_main(
+            "## [2.0.0]\n\n### Breaking changes\n\n- Removed `a`.\n", "v1.1.0\n"
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(output, "version=2.0.0\nmajor=v2\n")
+
+    def test_unreleased_breaking_changes_block_a_new_release_before_any_output(self):
+        # The release commit already contains whatever Unreleased lists, including
+        # when a pending version is published later by a manual run from main.
+        unreleased = "## [Unreleased]\n\n### Breaking changes\n\n- Removed `b`.\n\n"
+        for released, message in (
+            ("## [1.2.0]\n\n### Added\n\n- New.\n", "release it as 2.0.0"),
+            (
+                "## [2.0.0]\n\n### Breaking changes\n\n- Removed `a`.\n",
+                "move them into the 2.0.0 section",
+            ),
+        ):
+            with self.subTest(released=released):
+                result, output, notes = self.run_main(
+                    unreleased + released, "v1.1.0\nv1\n"
+                )
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn("'## [Unreleased]'", result.stderr)
+                self.assertIn(message, result.stderr)
+                self.assertEqual((output, notes), ("", ""))
+
+    def test_published_version_passes_with_unreleased_breaking_changes(self):
+        result, output, _ = self.run_main(
+            "## [Unreleased]\n\n### Breaking changes\n\n- Removed `b`.\n\n"
+            "## [2.0.0]\n\n### Breaking changes\n\n- Removed `a`.\n",
+            "v2.0.0\nv2\nv1.1.0\n",
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(output, "version=2.0.0\nmajor=v2\n")
+
+    def test_upgrade_guide_links_point_at_the_released_tag(self):
+        # GitHub resolves relative links in release notes against the release page.
+        result, _, notes = self.run_main(
+            "## [2.0.0]\n\n### Breaking changes\n\n"
+            "- Removed `a`. See [UPGRADING.md](UPGRADING.md#a-is-removed).\n"
+            "- Renamed `b`. See [the guide](./UPGRADING.md) and [c](OTHER.md#c).\n",
+            "v1.1.0\n",
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        guide = "https://github.example/owner/repo/blob/v2.0.0/UPGRADING.md"
+        self.assertEqual(
+            notes,
+            "### Breaking changes\n\n"
+            f"- Removed `a`. See [UPGRADING.md]({guide}#a-is-removed).\n"
+            f"- Renamed `b`. See [the guide]({guide}) and [c](OTHER.md#c).\n",
+        )
+
+
+class BreakingChangesTests(unittest.TestCase):
+    def test_entries_are_the_bullets_of_the_subsection(self):
+        notes = (
+            "### Breaking changes\n\n- Removed `a`.\n- Renamed `b` to `c`,\n"
+            "  so callers must rename it.\n  - Nested detail.\n\n"
+            "### Added\n\n- Not breaking.\n"
+        )
+        self.assertEqual(
+            release_notes.breaking_changes(notes),
+            [
+                "- Removed `a`.",
+                "- Renamed `b` to `c`, so callers must rename it. - Nested detail.",
+            ],
+        )
+
+    def test_no_subsection_or_an_empty_one_has_no_entries(self):
+        for notes in (
+            "### Added\n\n- New.\n",
+            "### Breaking changes\n\n### Added\n\n- New.\n",
+            "",
+        ):
+            with self.subTest(notes=notes):
+                self.assertEqual(release_notes.breaking_changes(notes), [])
+
+    def test_ordered_list_items_are_separate_entries(self):
+        notes = "### Breaking changes\n\n1. Removed `a`.\n2) Renamed `b`.\n   More.\n"
+        self.assertEqual(
+            release_notes.breaking_changes(notes),
+            ["1. Removed `a`.", "2) Renamed `b`. More."],
+        )
+
+    def test_code_blocks_stay_in_their_entry(self):
+        notes = (
+            "### Breaking changes\n\n- Removed `a`. Before:\n\n  ```yaml\n"
+            "  # old\n\n  a: 1\n  ```\n- Renamed `b`.\n  ~~~~\n## not a heading\n"
+            "```\n  ~~~~\n\n### Added\n\n- New.\n"
+        )
+        self.assertEqual(
+            release_notes.breaking_changes(notes),
+            [
+                "- Removed `a`. Before: ```yaml # old a: 1 ```",
+                "- Renamed `b`. ~~~~ ## not a heading ``` ~~~~",
+            ],
+        )
+
+    def test_paragraphs_deeper_headings_and_any_case_count(self):
+        notes = (
+            "### BREAKING CHANGES\r\n\r\nPython 3.11 is no longer supported.\r\n\r\n"
+            "#### Inputs\r\n\r\n* Removed `a`.\r\n\r\n## Fixed\r\n\r\n- Bug.\r\n"
+        )
+        self.assertEqual(
+            release_notes.breaking_changes(notes),
+            ["Python 3.11 is no longer supported.", "* Removed `a`."],
+        )
+
+
+class UnreleasedTests(unittest.TestCase):
+    PENDING = "## [Unreleased]\n\n### Breaking changes\n\n- Removed `b`.\n\n"
+
+    def test_new_release_with_unreleased_breaking_changes_fails(self):
+        for version, fix in (
+            ("1.2.0", "move them into the 1.2.0 section and release it as 2.0.0"),
+            ("2.0.0", "move them into the 2.0.0 section"),
+        ):
+            with self.subTest(version=version):
+                changelog = self.PENDING + f"## [{version}]\n\n- New.\n"
+                with self.assertRaises(SystemExit) as raised:
+                    release_notes.check_unreleased(version, changelog, ["v1.1.0", "v1"])
+                message = str(raised.exception)
+                self.assertTrue(message.endswith(f"would ship in {version}; {fix}"))
+
+    def test_published_version_or_no_pending_breaking_changes_pass(self):
+        release_notes.check_unreleased(
+            "2.0.0", self.PENDING + "## [2.0.0]\n\n- New.\n", ["v2.0.0", "v1.1.0"]
+        )
+        for unreleased in (
+            "## [Unreleased]\n\n### Added\n\n- New.\n\n",
+            "## [Unreleased]\n\n### Breaking changes\n\n",
+            "",
+        ):
+            with self.subTest(unreleased=unreleased):
+                release_notes.check_unreleased(
+                    "1.2.0", unreleased + "## [1.2.0]\n\n- New.\n", ["v1.1.0"]
+                )
+
+    def test_breaking_changes_in_older_sections_are_not_pending(self):
+        changelog = (
+            "## [Unreleased]\n\n## [2.0.1]\n\n- Fix.\n\n"
+            "## [2.0.0]\n\n### Breaking changes\n\n- Removed `a`.\n"
+        )
+        release_notes.check_unreleased("2.0.1", changelog, ["v2.0.0"])
+
+
+class MajorVersionTests(unittest.TestCase):
+    BREAKING = "### Breaking changes\n\n- Removed `a`.\n"
+    ADDED = "### Added\n\n- New.\n"
+
+    def test_breaking_changes_in_the_same_major_version_fail(self):
+        for version in ("1.2.0", "1.1.1"):
+            with self.subTest(version=version):
+                with self.assertRaises(SystemExit) as raised:
+                    release_notes.check_major_bump(
+                        version, self.BREAKING, ["v1.1.0", "v1.0.0", "v1"]
+                    )
+                self.assertIn("'Breaking changes' entries", str(raised.exception))
+                self.assertIn("release it as 2.0.0", str(raised.exception))
+
+    def test_new_major_version_without_breaking_changes_fails(self):
+        for notes in (self.ADDED, "### Breaking changes\n\n" + self.ADDED):
+            with self.subTest(notes=notes):
+                with self.assertRaises(SystemExit) as raised:
+                    release_notes.check_major_bump("2.0.0", notes, ["v1.1.0"])
+                self.assertIn(
+                    "raises the major version from v1.1.0", str(raised.exception)
+                )
+
+    def test_major_version_rises_exactly_with_breaking_changes(self):
+        release_notes.check_major_bump("2.0.0", self.BREAKING, ["v1.1.0", "v1"])
+        release_notes.check_major_bump("1.2.0", self.ADDED, ["v1.1.0", "v1"])
+        release_notes.check_major_bump("1.1.1", self.ADDED, ["v1.1.0"])
+
+    def test_published_version_is_compared_with_the_release_before_it(self):
+        # Every later push re-reads the published section; it must keep passing.
+        release_notes.check_major_bump(
+            "2.0.0", self.BREAKING, ["v2.0.0", "v2", "v1.1.0"]
+        )
+        release_notes.check_major_bump("2.0.1", self.ADDED, ["v2.0.1", "v2.0.0"])
+
+    def test_first_release_has_nothing_to_compare(self):
+        release_notes.check_major_bump("1.0.0", self.ADDED, [])
+        release_notes.check_major_bump("2.0.0", self.ADDED, ["v2", "not-a-release"])
+
+    def test_repository_changelog_matches_its_two_newest_releases(self):
+        # The release job applies this rule against the newest release tag; applying
+        # it to the two newest release sections fails a mismatched release pull
+        # request.
+        changelog = (ROOT / "CHANGELOG.md").read_text(encoding="utf-8")
+        releases = [
+            (".".join(match.groups()), notes)
+            for title, notes in release_notes.sections(changelog)
+            if (match := release_notes.VERSION_HEADING.fullmatch(title))
+        ]
+        self.assertGreaterEqual(len(releases), 2)
+        (version, notes), (previous, _) = releases[:2]
+        release_notes.check_major_bump(version, notes, [f"v{previous}"])
+
+
+class UpgradeGuideTests(unittest.TestCase):
+    UPGRADING = "# Upgrading\n\n## From v1 to v2\n\n### `a` is removed\n\nBefore.\n"
+
+    def changelog(self, entry, section="Unreleased"):
+        return (
+            f"# Changelog\n\n## [{section}]\n\n### Breaking changes\n\n{entry}\n\n"
+            "### Added\n\n- New, without a link.\n\n## [1.0.0]\n\n- Old.\n"
+        )
+
+    def test_entry_without_a_link_fails(self):
+        for entry in (
+            "- Removed `a`.",
+            "- Removed `a`; see [the guide](UPGRADING.md).",
+            "- Removed `a`; see [the guide](OTHER.md#a-is-removed).",
+        ):
+            with self.subTest(entry=entry):
+                problems = upgrade_link_problems(self.changelog(entry), self.UPGRADING)
+                self.assertEqual(len(problems), 1, problems)
+                self.assertIn("does not link to an UPGRADING.md heading", problems[0])
+                self.assertIn("'## [Unreleased]'", problems[0])
+
+    def test_link_to_a_missing_heading_fails(self):
+        entry = "- Removed `a`. See [UPGRADING.md](UPGRADING.md#a-was-removed)."
+        problems = upgrade_link_problems(
+            self.changelog(entry, "2.0.0 - 2026-11-01"), self.UPGRADING
+        )
+        self.assertEqual(len(problems), 1, problems)
+        self.assertIn("UPGRADING.md#a-was-removed, which is not a heading", problems[0])
+
+    def test_entry_linking_an_existing_heading_passes(self):
+        entry = (
+            "- Removed `a`. See [how to\n  upgrade](UPGRADING.md#a-is-removed) or\n"
+            "  [the overview](./UPGRADING.md#from-v1-to-v2)."
+        )
+        self.assertEqual(
+            upgrade_link_problems(self.changelog(entry), self.UPGRADING), []
+        )
+
+    def test_only_unreleased_and_the_newest_release_are_checked(self):
+        older = "\n\n## [0.9.0]\n\n### Breaking changes\n\n- Unlinked.\n"
+        changelog = (
+            "## [Unreleased]\n\n## [1.0.0]\n\n### Breaking changes\n\n- Unlinked.\n"
+        )
+        problems = upgrade_link_problems(changelog + older, self.UPGRADING)
+        self.assertEqual(len(problems), 1, problems)
+        self.assertIn("'## [1.0.0]'", problems[0])
+
+    def test_lines_in_code_blocks_are_not_headings(self):
+        upgrading = (
+            self.UPGRADING + "\n```yaml\n# Before\nwith:\n  a: 1\n```\n\n"
+            "    ### Indented code\n"
+        )
+        self.assertEqual(
+            github_anchors(upgrading), {"upgrading", "from-v1-to-v2", "a-is-removed"}
+        )
+        entry = "- Removed `a`. See [UPGRADING.md](UPGRADING.md#before)."
+        problems = upgrade_link_problems(self.changelog(entry), upgrading)
+        self.assertEqual(len(problems), 1, problems)
+        self.assertIn("UPGRADING.md#before, which is not a heading", problems[0])
+
+    def test_every_list_item_and_entry_after_a_code_block_is_checked(self):
+        for entry in (
+            "1. Removed `a`. [x](UPGRADING.md#a-is-removed)\n2. Renamed `b`.",
+            (
+                "- Removed `a`. [x](UPGRADING.md#a-is-removed)\n\n  ```yaml\n"
+                "  # Before\n  ```\n- Renamed `b`."
+            ),
+        ):
+            with self.subTest(entry=entry):
+                problems = upgrade_link_problems(self.changelog(entry), self.UPGRADING)
+                self.assertEqual(len(problems), 1, problems)
+                self.assertIn("does not link", problems[0])
+                self.assertIn("Renamed `b`.", problems[0])
+
+    def test_anchors_follow_github_heading_ids(self):
+        anchors = github_anchors(
+            "# Upgrading\n## From v1 to v2\n### `max-parallel` defaults to 256!\n"
+            "### Removed inputs\n### Removed inputs\n"
+        )
+        self.assertEqual(
+            anchors,
+            {
+                "upgrading",
+                "from-v1-to-v2",
+                "max-parallel-defaults-to-256",
+                "removed-inputs",
+                "removed-inputs-1",
+            },
+        )
+
+    def test_repository_breaking_changes_link_the_upgrade_guide(self):
+        upgrading = (ROOT / "UPGRADING.md").read_text(encoding="utf-8")
+        self.assertIn("from-v1-to-v2", github_anchors(upgrading))
+        changelog = (ROOT / "CHANGELOG.md").read_text(encoding="utf-8")
+        self.assertEqual(upgrade_link_problems(changelog, upgrading), [])
 
 
 class ReleaseOrderTests(unittest.TestCase):

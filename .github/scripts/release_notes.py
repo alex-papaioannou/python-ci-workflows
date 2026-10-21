@@ -8,9 +8,17 @@ fails loudly instead of silently falling through to an older release.
 Usage: release_notes.py NOTES_PATH [RELEASED_TAGS_PATH [PREVIOUS_CHANGELOG_PATH]]
 
 RELEASED_TAGS_PATH lists existing release tags, one per line; the version must
-not be lower than any of them. PREVIOUS_CHANGELOG_PATH is CHANGELOG.md as of the
-parent commit (it may be missing or empty); the ``introduced`` output says
-whether this commit added the version.
+not be lower than any of them, and its major version must be higher than that of
+the newest earlier release exactly when the section has ``### Breaking changes``
+entries. A version that is not yet released also fails while ``## [Unreleased]``
+has Breaking changes entries, because this commit already contains them.
+PREVIOUS_CHANGELOG_PATH is CHANGELOG.md as of the parent commit (it may be
+missing or empty); the ``introduced`` output says whether this commit added the
+version.
+
+Relative links to UPGRADING.md in the notes are rewritten to point at the file
+in the released tag, since GitHub resolves relative links in release notes
+against the release page.
 """
 
 from __future__ import annotations
@@ -29,6 +37,9 @@ VERSION_HEADING = re.compile(
     re.ASCII,
 )
 RELEASE_TAG = re.compile(rf"v{NUMBER}\.{NUMBER}\.{NUMBER}", re.ASCII)
+FENCE = re.compile(r"[ \t]*(`{3,}|~{3,})")
+LIST_ITEM = re.compile(r"(?:[-*+]|[0-9]+[.)])[ \t]")
+UPGRADE_GUIDE_LINK = re.compile(r"\]\((?:\./)?(UPGRADING\.md(?:#[^)\s]*)?)\)")
 
 
 def check_heading_levels(changelog: str) -> None:
@@ -50,13 +61,22 @@ def has_notes(body: str) -> bool:
     )
 
 
+def sections(changelog: str) -> list[tuple[str, str]]:
+    """Return (title, body) for each level-two section, in order."""
+    changelog = changelog.replace("\r\n", "\n")
+    headings = list(SECTION.finditer(changelog))
+    ends = [heading.start() for heading in headings[1:]] + [len(changelog)]
+    return [
+        (heading.group(1).strip(), changelog[heading.end() : end].strip())
+        for heading, end in zip(headings, ends)
+    ]
+
+
 def newest_release(changelog: str) -> tuple[str, str, str]:
     """Return (version, major tag, notes) for the first released section."""
     changelog = changelog.replace("\r\n", "\n")
     check_heading_levels(changelog)
-    headings = list(SECTION.finditer(changelog))
-    for index, heading in enumerate(headings):
-        title = heading.group(1).strip()
+    for title, notes in sections(changelog):
         if title.lower() == "[unreleased]":
             continue
         match = VERSION_HEADING.fullmatch(title)
@@ -65,29 +85,135 @@ def newest_release(changelog: str) -> tuple[str, str, str]:
                 f"CHANGELOG.md heading '## {title}' is not '## [X.Y.Z]' or "
                 "'## [X.Y.Z] - YYYY-MM-DD'"
             )
-        end = (
-            headings[index + 1].start() if index + 1 < len(headings) else len(changelog)
-        )
-        notes = changelog[heading.end() : end].strip()
         if not has_notes(notes):
             raise SystemExit(f"CHANGELOG.md section '## {title}' has no release notes")
         return ".".join(match.groups()), f"v{match.group(1)}", notes + "\n"
     raise SystemExit("CHANGELOG.md has no '## [X.Y.Z]' release heading")
 
 
-def check_not_older(version: str, released_tags: list[str]) -> None:
-    """Fail when the changelog version is lower than an existing release."""
-    current = tuple(int(part) for part in version.split("."))
-    released = [
+def fenced_lines(markdown: str) -> list[tuple[str, bool]]:
+    """Pair each line with whether it is a code fence or inside a fenced block."""
+    lines: list[tuple[str, bool]] = []
+    fence = ""  # The marker that opened the current fenced block, or "".
+    for line in markdown.replace("\r\n", "\n").splitlines():
+        marker = FENCE.match(line)
+        lines.append((line, bool(fence or marker)))
+        if marker and not fence:
+            fence = marker.group(1)
+        elif marker and not line[marker.end() :].strip():
+            # A closing fence repeats the opening character at least as often.
+            fence = "" if marker.group(1).startswith(fence) else fence
+    return lines
+
+
+def breaking_changes(notes: str) -> list[str]:
+    """Return the entries under a section's Breaking changes subsections.
+
+    Each list item or paragraph is one entry, with its continuation lines, nested
+    lists and code blocks joined to it. Deeper headings stay inside the subsection.
+    """
+    entries: list[str] = []
+    level = 0  # Heading level of the Breaking changes subsection we are in, or 0.
+    previous_blank = True
+    for line, fenced in fenced_lines(notes):
+        heading = None if fenced else ANY_HEADING.fullmatch(line)
+        if heading:
+            depth = len(line.lstrip(" ")) - len(line.lstrip(" ").lstrip("#"))
+            if heading.group(1).strip().lower() == "breaking changes":
+                level = depth
+            elif depth <= level:
+                level = 0
+            previous_blank = True
+        elif not line.strip():
+            previous_blank = previous_blank or not fenced
+        elif level:
+            new_entry = not fenced and (previous_blank or LIST_ITEM.match(line))
+            if entries and (line[0].isspace() or not new_entry):
+                entries[-1] += " " + line.strip()
+            else:
+                entries.append(line.strip())
+            previous_blank = False
+    return entries
+
+
+def release_versions(released_tags: list[str]) -> list[tuple[int, ...]]:
+    """Return the versions of the vX.Y.Z tags, ignoring others such as v1."""
+    return [
         tuple(int(part) for part in match.groups())
         for tag in released_tags
         if (match := RELEASE_TAG.fullmatch(tag.strip()))
     ]
+
+
+def check_not_older(version: str, released_tags: list[str]) -> None:
+    """Fail when the changelog version is lower than an existing release."""
+    current = tuple(int(part) for part in version.split("."))
+    released = release_versions(released_tags)
     if released and current < max(released):
         newest = "v" + ".".join(map(str, max(released)))
         raise SystemExit(
             f"CHANGELOG.md version {version} is lower than the newest release {newest}"
         )
+
+
+def check_major_bump(version: str, notes: str, released_tags: list[str]) -> None:
+    """Fail unless the major version rises exactly when there are breaking changes.
+
+    The version is compared with the newest release before it, so re-running the
+    release of a version that is already published passes.
+    """
+    current = tuple(int(part) for part in version.split("."))
+    earlier = [tag for tag in release_versions(released_tags) if tag < current]
+    if not earlier:
+        return
+    previous = max(earlier)
+    name = "v" + ".".join(map(str, previous))
+    breaking = bool(breaking_changes(notes))
+    if breaking and current[0] <= previous[0]:
+        raise SystemExit(
+            f"CHANGELOG.md version {version} has 'Breaking changes' entries but keeps "
+            f"the major version of {name}; release it as {previous[0] + 1}.0.0"
+        )
+    if not breaking and current[0] > previous[0]:
+        raise SystemExit(
+            f"CHANGELOG.md version {version} raises the major version from {name} "
+            "but has no 'Breaking changes' entries; list them under '### Breaking "
+            "changes' or keep the major version"
+        )
+
+
+def check_unreleased(version: str, changelog: str, released_tags: list[str]) -> None:
+    """Fail when publishing a version would also ship unreleased breaking changes.
+
+    Releases are made from main, which already contains every change listed under
+    ``## [Unreleased]``. Re-reading a version that is already published passes.
+    """
+    current = tuple(int(part) for part in version.split("."))
+    released = release_versions(released_tags)
+    if current in released:
+        return
+    pending: list[str] = []
+    for title, notes in sections(changelog):
+        if title.lower() != "[unreleased]":
+            break
+        pending += breaking_changes(notes)
+    if not pending:
+        return
+    earlier = [tag for tag in released if tag < current]
+    fix = f"move them into the {version} section"
+    if earlier and current[0] <= max(earlier)[0]:
+        fix += f" and release it as {max(earlier)[0] + 1}.0.0"
+    raise SystemExit(
+        "CHANGELOG.md has 'Breaking changes' entries under '## [Unreleased]', which "
+        f"this commit already contains and would ship in {version}; {fix}"
+    )
+
+
+def absolute_upgrade_links(notes: str, version: str, repository_url: str) -> str:
+    """Point relative UPGRADING.md links at the file in the released tag."""
+    return UPGRADE_GUIDE_LINK.sub(
+        lambda link: f"]({repository_url}/blob/v{version}/{link.group(1)})", notes
+    )
 
 
 def introduced(version: str, previous_changelog: str) -> bool:
@@ -99,18 +225,22 @@ def introduced(version: str, previous_changelog: str) -> bool:
 
 
 def main() -> int:
-    version, major, notes = newest_release(
-        Path("CHANGELOG.md").read_text(encoding="utf-8")
-    )
+    changelog = Path("CHANGELOG.md").read_text(encoding="utf-8")
+    version, major, notes = newest_release(changelog)
     outputs = {"version": version, "major": major}
     if len(sys.argv) > 2:
-        check_not_older(
-            version, Path(sys.argv[2]).read_text(encoding="utf-8").splitlines()
-        )
+        released_tags = Path(sys.argv[2]).read_text(encoding="utf-8").splitlines()
+        check_not_older(version, released_tags)
+        check_major_bump(version, notes, released_tags)
+        check_unreleased(version, changelog, released_tags)
     if len(sys.argv) > 3:
         previous = Path(sys.argv[3])
         text = previous.read_text(encoding="utf-8") if previous.is_file() else ""
         outputs["introduced"] = "true" if introduced(version, text) else "false"
+    repository_url = (
+        f"{os.environ['GITHUB_SERVER_URL']}/{os.environ['GITHUB_REPOSITORY']}"
+    )
+    notes = absolute_upgrade_links(notes, version, repository_url)
     Path(sys.argv[1]).write_text(notes, encoding="utf-8")
     with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as output:
         output.writelines(f"{key}={value}\n" for key, value in outputs.items())

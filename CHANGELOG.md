@@ -5,6 +5,20 @@ major tag such as `v1`, an exact release, or a commit SHA.
 
 ## [Unreleased]
 
+### Added
+
+- UPGRADING.md, the guide to moving to a new major version. Each breaking change gets
+  an entry there that shows the calling workflow before and after.
+
+### Changed
+
+- The release job fails when a section has Breaking changes entries but keeps the
+  major version, or raises the major version without any. It also releases no new
+  version while Unreleased has Breaking changes entries, so breaking changes can no
+  longer ship in a 1.x release. Each Breaking changes entry links its UPGRADING.md
+  entry, which the test suite checks, and the release notes point those links at
+  the released tag.
+
 ## [1.1.0] - 2026-10-21
 
 ### Added
