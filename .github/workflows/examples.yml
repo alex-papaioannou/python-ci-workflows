@@ -40,7 +40,7 @@ jobs:
     with:
       working-directory: examples/uv-project
       python-versions: '["3.12"]'
-      installer: uv
+      # Installs with uv because requirements-file is a uv.lock.
       requirements-file: uv.lock
       audit-version: "2.10.1"
       # One runner as JSON: labels it must all have, like one operating-systems entry.

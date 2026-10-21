@@ -416,6 +416,30 @@ def resolve_test_runner() -> str:
     return runner
 
 
+def resolve_installer(requirements: str) -> str:
+    """Return the installer, choosing uv for requirement files only uv reads.
+
+    A called workflow cannot tell a defaulted input from one the caller passed, so a
+    uv.lock or pylock.toml overrides installer: pip too. The job summary gets the
+    line only when requirements-file or install-project is set, since the installer
+    is unused otherwise.
+    """
+    installer = env("INSTALLER", "pip")
+    if installer not in ("pip", "uv"):
+        raise SystemExit("installer must be pip or uv")
+    if requirements and (is_uv_lock(requirements) or is_pylock(requirements)):
+        installer = "uv"
+        reason = f"requirements-file is {Path(requirements).name}"
+    else:
+        reason = "installer input"
+    line = f"Installer: {installer} ({reason})"
+    print(line)
+    if env("GITHUB_STEP_SUMMARY") and (requirements or flag("INSTALL_PROJECT")):
+        with open(env("GITHUB_STEP_SUMMARY"), "a", encoding="utf-8") as summary:
+            summary.write(line + "\n\n")
+    return installer
+
+
 def validate() -> int:
     check_directory("TEST_DIRECTORY", "test-directory")
     check_directory("TOP_LEVEL_DIRECTORY", "top-level-directory")
@@ -456,18 +480,12 @@ def validate() -> int:
         not isinstance(v, str) or not v for v in ignore
     ):
         raise SystemExit("audit-ignore must be a JSON array of vulnerability IDs")
-    if env("INSTALLER", "pip") not in ("pip", "uv"):
-        raise SystemExit("installer must be pip or uv")
+    # Later steps read the resolved installer from this step's installer output.
+    installer = resolve_installer(requirements)
     if not VERSION.fullmatch(env("UV_VERSION")) or (
-        env("INSTALLER") == "uv" and not env("UV_VERSION")
+        installer == "uv" and not env("UV_VERSION")
     ):
         raise SystemExit("uv-version must be a version such as 0.13.4")
-    if (
-        requirements
-        and (is_uv_lock(requirements) or is_pylock(requirements))
-        and env("INSTALLER", "pip") != "uv"
-    ):
-        raise SystemExit("uv.lock and pylock.toml requirements need installer: uv")
     if flag("INSTALL_PROJECT") and not (
         Path("pyproject.toml").is_file() or Path("setup.py").is_file()
     ):
@@ -507,7 +525,12 @@ def validate() -> int:
     re.compile(env("COMPILE_EXCLUDE"))
     warn_about_inputs_without_effect()
     write_outputs(
-        {"artifact-suffix": artifact_suffix(), "test-runner": runner, **matrix_cell()}
+        {
+            "artifact-suffix": artifact_suffix(),
+            "test-runner": runner,
+            "installer": installer,
+            **matrix_cell(),
+        }
     )
     return 0
 
