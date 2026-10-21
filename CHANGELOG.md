@@ -69,6 +69,10 @@ major tag such as `v1`, an exact release, or a commit SHA.
 
 ### Fixed
 
+- The README said the `src-package` example's wheel is tested on Linux and Windows,
+  but the build and the wheel test run only on the primary cell. The example list,
+  the `test-wheel` row, "The primary cell" and "How it runs" now say so.
+
 ### Security
 
 ### Changed defaults
