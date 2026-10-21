@@ -929,6 +929,35 @@ class WorkflowTests(StepHarness, unittest.TestCase):
                 )
         self.assertEqual(set(declared), documented)
 
+    def test_support_policy_matches_the_workflow_and_ci(self):
+        readme = (ROOT / "README.md").read_text()
+
+        def section(title):
+            body = re.search(rf"(?ms)^## {title}\n(.*?)^## ", readme)
+            self.assertIsNotNone(body, f"README has no '## {title}' section")
+            return " ".join(body.group(1).split())
+
+        policy = section("Support policy")
+        # The support window is the default python-versions, a run of minor versions.
+        default = re.search(
+            r"^      python-versions:\n(?:        .*\n)*?        default: (.*)$",
+            WORKFLOW.read_text(),
+            re.MULTILINE,
+        ).group(1)
+        versions = json.loads(json.loads(default))
+        minors = [int(version.split(".")[1]) for version in versions]
+        self.assertEqual(minors, list(range(minors[0], minors[-1] + 1)))
+        self.assertIn(f"{versions[0]} through {versions[-1]} in v", policy)
+        # Every runner label this repository's CI tests on is named.
+        ci = (ROOT / ".github/workflows/ci.yml").read_text()
+        labels = re.search(r"^      operating-systems: '(.*)'$", ci, re.MULTILINE)
+        for label in json.loads(labels.group(1)):
+            self.assertIn(f"`{label}`", policy)
+        # The self-hosted runner floor is the one "How it runs" gives.
+        floor = r"runner (?:on )?version (\d+\.\d+\.\d+) or newer"
+        (runner_floor,) = re.findall(floor, section("How it runs"))
+        self.assertEqual(re.findall(floor, policy), [runner_floor])
+
     def test_more_invalid_inputs_rejected(self):
         cases = (
             {"TEST_PATTERN": "tests/test_*.py"},

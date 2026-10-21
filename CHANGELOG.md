@@ -5,10 +5,18 @@ major tag such as `v1`, an exact release, or a commit SHA.
 
 ## [Unreleased]
 
+### Breaking changes
+
 ### Added
 
 - UPGRADING.md, the guide to moving to a new major version. Each breaking change gets
   an entry there that shows the calling workflow before and after.
+- A support policy in the README: the supported platforms, the self-hosted runner
+  floor, the Python support window, when input defaults change and how the changes
+  are announced, how deprecated inputs warn, which changes may ship in a minor
+  release, and how long a previous major version receives security fixes.
+  CONTRIBUTING's definition of a breaking change and SECURITY.md's supported
+  versions match it.
 
 ### Changed
 
@@ -18,6 +26,14 @@ major tag such as `v1`, an exact release, or a commit SHA.
   longer ship in a 1.x release. Each Breaking changes entry links its UPGRADING.md
   entry, which the test suite checks, and the release notes point those links at
   the released tag.
+
+### Fixed
+
+### Security
+
+### Changed defaults
+
+### Behaviour changes
 
 ## [1.1.0] - 2026-10-21
 

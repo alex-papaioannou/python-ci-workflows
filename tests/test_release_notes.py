@@ -538,6 +538,32 @@ class ReleaseOrderTests(unittest.TestCase):
         first_section = re.search(r"(?m)^## (.*)$", changelog).group(1)
         self.assertEqual(first_section, "[Unreleased]")
 
+    def test_repository_unreleased_section_keeps_every_subsection(self):
+        contributing = " ".join(
+            (ROOT / "CONTRIBUTING.md").read_text(encoding="utf-8").split()
+        )
+        listed = re.search(r"in one of these subsections: ([^.]*)\.", contributing)
+        changelog = (ROOT / "CHANGELOG.md").read_text(encoding="utf-8")
+        title, unreleased = release_notes.sections(changelog)[0]
+        self.assertEqual(title, "[Unreleased]")
+        self.assertEqual(
+            re.findall(r"(?m)^### (.*)$", unreleased), listed.group(1).split(", ")
+        )
+        for subsection in ("Breaking changes", "Changed defaults", "Behaviour changes"):
+            self.assertIn(subsection, listed.group(1))
+
+    def test_repository_releases_have_no_empty_subsections(self):
+        # A release section is published as it is, so a template heading that the
+        # release pull request left empty would end up in the release notes.
+        changelog = (ROOT / "CHANGELOG.md").read_text(encoding="utf-8")
+        for title, notes in release_notes.sections(changelog):
+            if title.lower() == "[unreleased]":
+                continue
+            parts = re.split(r"(?m)^(###[ \t].*)$", notes)
+            for heading, body in zip(parts[1::2], parts[2::2]):
+                with self.subTest(section=title, subsection=heading):
+                    self.assertTrue(body.strip(), f"'## {title}' has empty {heading!r}")
+
     def test_repository_changelog_parses(self):
         changelog = (SCRIPT.parents[2] / "CHANGELOG.md").read_text(encoding="utf-8")
         version, major, notes = release_notes.newest_release(changelog)

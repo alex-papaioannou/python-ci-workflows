@@ -38,14 +38,29 @@ updating the tests.
 
 ## Releases
 
-Releases follow semantic versioning. A breaking change is removing or renaming an
-input or output, changing a default in a way that can fail existing callers, or
-dropping a supported Python version.
+Releases follow semantic versioning and the README's
+[support policy](README.md#support-policy). A breaking change, which needs a new
+major version, is removing or renaming an input or output, changing an input's type,
+its default or what that default does, or any other change that can fail an existing
+caller's run. Adding a Python version to the default `python-versions`, or removing
+one, changes a default. A minor release may still ship three kinds of change that
+can fail a run: a security fix that moves a tool version default, listed under
+Security, which may also ship in a patch release; a new version of something the
+workflow pins without an input (build, twine and the pinned actions), listed under
+Changed defaults, which may raise the self-hosted runner floor as the support policy
+describes; and a fix that makes the workflow report a failure it used to hide,
+listed under Behaviour changes, unless the fix changes a default or what it does.
+
+A deprecated input stays declared until the next major version. When a call sets it
+to anything but its default, the `Validate inputs` step prints a `::warning::` that
+names its replacement; the first deprecation adds that check to `steps.py`.
 
 Every pull request that changes behaviour adds a bullet under `## [Unreleased]` at
 the top of `CHANGELOG.md`, in one of these subsections: Breaking changes, Added,
-Changed, Fixed, Security, Changed defaults, Behaviour changes. A breaking change as
-defined above goes under Breaking changes, even when it changes a default. Any entry
+Changed, Fixed, Security, Changed defaults, Behaviour changes. The Unreleased
+section keeps each of them as a heading, in that order, even while it is empty, and
+the test suite checks that it does. A breaking change as defined above goes under
+Breaking changes as soon as it merges, even when it changes a default. Any entry
 there makes the next release a new major version, and each one needs an entry in
 [UPGRADING.md](UPGRADING.md) that shows the calling workflow before and after. That
 entry is a `###` heading under the section for the new major version, such as
@@ -56,12 +71,21 @@ Changed defaults and Behaviour changes list the other changes that can make an
 existing caller's run behave differently.
 
 Releasing is automated. To release, open a pull request that renames
-`## [Unreleased]` to `## [X.Y.Z] - YYYY-MM-DD` and adds a fresh, empty
-`## [Unreleased]` above it. When it merges, the `Release` workflow runs the
-smoke test, the example consumers and workflow lint again on that exact commit. Only
-if all of them pass does it create the `vX.Y.Z` GitHub release from that section and
-move the major tag (`vX`) to the same commit. Releases run only from `main`, in the
-`release` environment.
+`## [Unreleased]` to `## [X.Y.Z] - YYYY-MM-DD`, deletes the subsections that stayed
+empty, and adds a fresh `## [Unreleased]` with every subsection heading above it.
+The released section becomes the release notes as written, so the test suite fails
+on one with an empty subsection. When the pull request merges, the `Release`
+workflow runs the smoke test, the example consumers and workflow lint again on that
+exact commit. Only if all of them pass does it create the `vX.Y.Z` GitHub release
+from that section and move the major tag (`vX`) to the same commit. Releases run
+only from `main`, in the `release` environment.
+
+From v2 on, the support policy gives the previous major version security fixes for
+six months, as patch releases from a maintenance branch. Before v3.0.0 ships, three
+things that tie releases to `main` must change: the push trigger and `github.ref`
+checks in `release.yml`, the `release` environment's allowed branches, and the
+release job's check that a version is not lower than the newest release, which on a
+maintenance branch must compare only with releases of the same major version.
 
 The release job reads the first `## ` section after `## [Unreleased]`. That heading
 must be `## [X.Y.Z]` or `## [X.Y.Z] - YYYY-MM-DD` with plain ASCII numbers and no
