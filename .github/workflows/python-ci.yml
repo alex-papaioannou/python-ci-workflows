@@ -250,6 +250,7 @@ jobs:
           DOCTEST_PATHS: ${{ inputs.doctest-paths }}
         run: python "$PYTHON_CI_STEPS" validate
       - name: Install dependencies
+        id: install
         if: inputs.requirements-file != '' || inputs.install-project
         env:
           REQUIREMENTS_FILE: ${{ inputs.requirements-file }}
@@ -260,6 +261,7 @@ jobs:
           UV_VERSION: ${{ inputs.uv-version }}
         run: python "$PYTHON_CI_STEPS" install
       - name: Audit dependencies
+        id: audit
         if: inputs.audit-version != '' && steps.validate.outputs.primary == 'true'
         env:
           AUDIT_VERSION: ${{ inputs.audit-version }}
@@ -267,6 +269,7 @@ jobs:
           REQUIREMENTS_FILE: ${{ inputs.requirements-file }}
         run: python "$PYTHON_CI_STEPS" audit
       - name: Lint with Ruff
+        id: ruff
         if: inputs.ruff-version != '' && steps.validate.outputs.primary == 'true'
         env:
           RUFF_VERSION: ${{ inputs.ruff-version }}
@@ -274,17 +277,20 @@ jobs:
           LINT_PATHS: ${{ inputs.lint-paths }}
         run: python "$PYTHON_CI_STEPS" ruff
       - name: Type-check with mypy
+        id: mypy
         if: inputs.mypy-version != ''
         env:
           MYPY_VERSION: ${{ inputs.mypy-version }}
           LINT_PATHS: ${{ inputs.lint-paths }}
         run: python "$PYTHON_CI_STEPS" mypy
       - name: Check Python syntax
+        id: compile
         env:
           COMPILE_PATHS: ${{ inputs.compile-paths }}
           COMPILE_EXCLUDE: ${{ inputs.compile-exclude }}
         run: python "$PYTHON_CI_STEPS" compile
       - name: Build and check package
+        id: build
         if: inputs.build-package && steps.validate.outputs.primary == 'true'
         env:
           TEST_WHEEL: ${{ inputs.test-wheel }}
@@ -305,13 +311,19 @@ jobs:
           path: ${{ runner.temp }}/python-ci-dist
           if-no-files-found: error
       - name: Install test tools
-        if: inputs.coverage-version != '' || steps.validate.outputs.test-runner == 'pytest'
+        id: test-tools
+        # The tests depend only on validation and installation, so a failed lint, type,
+        # syntax or build check still leaves test results; 'Summarise checks' records
+        # which check failed.
+        if: ${{ !cancelled() && steps.validate.outcome == 'success' && steps.install.outcome != 'failure' && (inputs.coverage-version != '' || steps.validate.outputs.test-runner == 'pytest') }}
         env:
           COVERAGE_VERSION: ${{ inputs.coverage-version }}
           TEST_RUNNER: ${{ steps.validate.outputs.test-runner }}
           PYTEST_VERSION: ${{ inputs.pytest-version }}
         run: python "$PYTHON_CI_STEPS" install-test-tools
       - name: Run tests and reject empty test suites
+        id: test
+        if: ${{ !cancelled() && steps.validate.outcome == 'success' && steps.install.outcome != 'failure' && steps.test-tools.outcome != 'failure' }}
         env:
           TEST_DIRECTORY: ${{ inputs.test-directory }}
           TEST_PATTERN: ${{ inputs.test-pattern }}
@@ -340,6 +352,34 @@ jobs:
           name: coverage-${{ steps.validate.outputs.os-slug || matrix.os }}-${{ matrix.python-version }}${{ steps.validate.outputs.artifact-suffix }}
           path: ${{ inputs.working-directory }}/coverage.xml
           if-no-files-found: ignore
+      - name: Summarise checks
+        if: ${{ always() && steps.validate.outcome != 'skipped' }}
+        # The table needs no project files, so a missing working-directory, which fails
+        # validation, does not stop it either.
+        working-directory: ${{ github.workspace }}
+        env:
+          VALIDATE_OUTCOME: ${{ steps.validate.outcome }}
+          INSTALL_OUTCOME: ${{ steps.install.outcome }}
+          AUDIT_OUTCOME: ${{ steps.audit.outcome }}
+          RUFF_OUTCOME: ${{ steps.ruff.outcome }}
+          MYPY_OUTCOME: ${{ steps.mypy.outcome }}
+          COMPILE_OUTCOME: ${{ steps.compile.outcome }}
+          BUILD_OUTCOME: ${{ steps.build.outcome }}
+          TEST_TOOLS_OUTCOME: ${{ steps.test-tools.outcome }}
+          TEST_OUTCOME: ${{ steps.test.outcome }}
+          PRIMARY: ${{ steps.validate.outputs.primary }}
+          REQUIREMENTS_FILE: ${{ inputs.requirements-file }}
+          INSTALL_PROJECT: ${{ inputs.install-project }}
+          INSTALLER: ${{ steps.validate.outputs.installer }}
+          UV_VERSION: ${{ inputs.uv-version }}
+          AUDIT_VERSION: ${{ inputs.audit-version }}
+          RUFF_VERSION: ${{ inputs.ruff-version }}
+          MYPY_VERSION: ${{ inputs.mypy-version }}
+          BUILD_PACKAGE: ${{ inputs.build-package }}
+          TEST_RUNNER: ${{ steps.validate.outputs.test-runner }}
+          PYTEST_VERSION: ${{ inputs.pytest-version }}
+          COVERAGE_VERSION: ${{ inputs.coverage-version }}
+        run: python "$PYTHON_CI_STEPS" checks
   result:
     name: result
     needs: test

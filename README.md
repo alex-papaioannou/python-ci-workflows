@@ -323,13 +323,15 @@ jobs:
 ```
 
 Every test job also appends a pass, fail, error and skip table, the IDs of
-failing tests, and the ten slowest tests to the job summary.
+failing tests, and the ten slowest tests to the job summary, followed by the outcome
+of every check (see "How it runs").
 
 ## How it runs
 
 Each matrix job runs these steps in order. Steps for features you have not enabled
-are skipped, and the audit, Ruff, the build and the wheel test run only on the
-[primary cell](#the-primary-cell).
+are skipped. The audit, Ruff, the build and the wheel test run only on the
+[primary cell](#the-primary-cell). A failed step skips the steps after it, except
+where noted.
 
 1. Check out the caller's repository without persisting credentials.
 2. Set up Python, with pip's download cache when `requirements-file` or
@@ -341,9 +343,20 @@ are skipped, and the audit, Ruff, the build and the wheel test run only on the
 5. Run Ruff, then mypy.
 6. Byte-compile `compile-paths`.
 7. Build and check the package, and optionally test the built wheel, once per run
-   on the primary cell.
-8. Run unittest or pytest, optionally under coverage, and write reports.
+   on the primary cell. Upload `dist` when `upload-dist` is set.
+8. Run unittest or pytest, optionally under coverage, and write reports. The tests
+   depend only on validation and installation, so they also run after lint, type,
+   compile and build failures and after a failed audit. The job still fails then,
+   and nothing is uploaded as `dist`.
 9. Upload JUnit and coverage artifacts, even when tests fail.
+10. Add a table to the job summary, so it shows which check failed. It has one row
+    each for validation, installation, the audit, Ruff, mypy, the syntax check, the
+    build, the test tools and the tests, with the tool versions you asked for. The
+    outcome is success, failure, skipped, or "not enabled" when its input is unset.
+    On the other cells, the audit, Ruff and the build read "skipped (runs on the
+    primary cell)". The syntax check and the build still need every earlier step to
+    succeed, so they read skipped after a failed check. The table is written
+    whenever validation ran.
 
 Third-party actions are pinned to full commit SHAs, and tool versions are pinned
 explicitly. The step scripts are fetched at the same commit as the workflow, without

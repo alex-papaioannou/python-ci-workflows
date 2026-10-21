@@ -44,6 +44,13 @@ major tag such as `v1`, an exact release, or a commit SHA.
   pinned SHA is the commit of the release its comment names.
 - Release notes end with the release commit's full SHA, a `uses:` line pinned to it
   and a link comparing the release with the previous one.
+- Each matrix cell's job summary ends with a table of its checks: validation,
+  installation, the audit, Ruff, mypy, the syntax check, the build, the test tools
+  and the tests. It gives the outcome of each and the tool versions requested, such
+  as `mypy 2.4.0`. The outcome is success, failure, skipped, or not enabled when its
+  input leaves it off; on the other cells the audit, Ruff and the build read
+  "skipped (runs on the primary cell)". The table is written whenever validation
+  ran, even after a failure.
 
 ### Changed
 
@@ -78,6 +85,14 @@ major tag such as `v1`, an exact release, or a commit SHA.
 ### Changed defaults
 
 ### Behaviour changes
+
+- The tests now run after lint, type, compile and build failures, that is when Ruff,
+  mypy, the syntax check or the package build fails, and after a failed dependency
+  audit. They depend only on validation and on installing the dependencies and test
+  tools. One mypy or syntax error used to skip the tests on every matrix cell, and a
+  Ruff or build failure skipped them on the primary cell. The job still fails, and
+  `dist` is still uploaded only when every earlier step succeeded. The syntax check
+  and the build still need every earlier step to succeed.
 
 ## [1.1.0] - 2026-10-21
 

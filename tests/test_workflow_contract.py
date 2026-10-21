@@ -26,10 +26,13 @@ SMOKE = ROOT / ".github/workflows/ci.yml"
 EXAMPLES = ROOT / ".github/workflows/examples.yml"
 DEV_REQUIREMENTS = ROOT / "requirements-dev.txt"
 
-# Variables the workflow sets from its inputs. Inner runs must not inherit them from
-# the outer environment (this repository's own CI sets several for its test step).
+# Variables the workflow sets from its inputs and step results. Inner runs must not
+# inherit them from the outer environment (this repository's own CI sets several for
+# its test step).
 INPUT_VARIABLES = set(
-    re.findall(r"^\s+([A-Z_]+): \$\{\{ inputs\.", WORKFLOW.read_text(), re.MULTILINE)
+    re.findall(
+        r"^\s+([A-Z_]+): \$\{\{ (?:inputs|steps)\.", WORKFLOW.read_text(), re.MULTILINE
+    )
 ) | {
     "PYTHONWARNINGS",
     "PYTHONHASHSEED",
@@ -2180,6 +2183,231 @@ class DoctestAndTimingTests(StepHarness, unittest.TestCase):
             self.assertLess(text.index("test_slow"), text.index("test_fast"))
 
 
+# A status function in an if: replaces the implicit success() check.
+STATUS_FUNCTION = re.compile(r"\b(?:always|success|failure|cancelled)\(\s*\)")
+
+
+def expression(condition):
+    """Return the expression of an if: value, with or without its ${{ }}."""
+    match = re.fullmatch(r"\$\{\{\s*(.*?)\s*\}\}", condition.strip(), re.DOTALL)
+    return match.group(1) if match else condition.strip()
+
+
+class CheckSummaryTests(StepHarness, unittest.TestCase):
+    """The tests run after failed checks, and a final table records every check."""
+
+    def job_steps(self):
+        return yaml.safe_load(WORKFLOW.read_text())["jobs"]["test"]["steps"]
+
+    @unittest.skipUnless(yaml, "needs PyYAML")
+    def test_tests_depend_only_on_validation_and_installation(self):
+        steps = {step.get("name"): step for step in self.job_steps()}
+        gate = (
+            "!cancelled() && steps.validate.outcome == 'success' && "
+            "steps.install.outcome != 'failure'"
+        )
+        tools = expression(steps["Install test tools"]["if"])
+        self.assertTrue(tools.startswith(gate + " && "), tools)
+        self.assertIn(
+            "(inputs.coverage-version != '' || "
+            "steps.validate.outputs.test-runner == 'pytest')",
+            tools,
+        )
+        # Neither audit, Ruff, mypy, the syntax check nor the build gates the tests.
+        tests = expression(steps["Run tests and reject empty test suites"]["if"])
+        self.assertEqual(tests, gate + " && steps.test-tools.outcome != 'failure'")
+        # A failed check skips the build, and the implicit success() then keeps the
+        # upload from publishing anything.
+        upload = steps["Upload distributions"]["if"]
+        self.assertIsNone(STATUS_FUNCTION.search(upload), upload)
+
+    @unittest.skipUnless(yaml, "needs PyYAML")
+    def test_the_summary_step_runs_last_with_every_outcome(self):
+        steps = self.job_steps()
+        last = steps[-1]
+        self.assertEqual(last["name"], "Summarise checks")
+        self.assertEqual(
+            last["if"], "${{ always() && steps.validate.outcome != 'skipped' }}"
+        )
+        self.assertEqual(script("Summarise checks"), "checks")
+        # A working-directory that does not exist fails validation; the table, which
+        # reads no project files, must not fail with it.
+        self.assertEqual(last["working-directory"], "${{ github.workspace }}")
+        ids = {step["name"]: step["id"] for step in steps if "id" in step}
+        self.assertEqual(
+            ids,
+            {
+                "Validate inputs": "validate",
+                "Install dependencies": "install",
+                "Audit dependencies": "audit",
+                "Lint with Ruff": "ruff",
+                "Type-check with mypy": "mypy",
+                "Check Python syntax": "compile",
+                "Build and check package": "build",
+                "Install test tools": "test-tools",
+                "Run tests and reject empty test suites": "test",
+            },
+        )
+        # An outcome of a step id that does not exist would be empty, not an error.
+        outcomes = sorted(
+            value for name, value in last["env"].items() if name.endswith("_OUTCOME")
+        )
+        self.assertEqual(
+            outcomes, sorted(f"${{{{ steps.{id_}.outcome }}}}" for id_ in ids.values())
+        )
+
+    def summary_rows(self, env):
+        """Run the summary step and return its table rows as (check, outcome, version)."""
+        with tempfile.TemporaryDirectory() as out:
+            summary = Path(out) / "summary.md"
+            result = self.execute(
+                {},
+                {**env, "GITHUB_STEP_SUMMARY": str(summary)},
+                step="Summarise checks",
+            )
+            self.assertEqual(result.returncode, 0, result.stderr)
+            text = summary.read_text(encoding="utf-8")
+        self.assertIn(text.strip(), result.stdout)
+        self.assertEqual(text.count("| Check | Outcome | Version |"), 1)
+        lines = text[text.index("| Check |") :].splitlines()[2:]
+        rows = []
+        for line in lines:
+            if not line.startswith("|"):
+                break
+            rows.append(tuple(cell.strip() for cell in line.strip("|").split("|")))
+        return rows
+
+    def test_the_table_has_one_row_per_check(self):
+        rows = self.summary_rows(
+            {
+                "VALIDATE_OUTCOME": "success",
+                "INSTALL_OUTCOME": "success",
+                "REQUIREMENTS_FILE": "requirements.txt",
+                "INSTALLER": "uv",
+                "UV_VERSION": "0.13.4",
+                "AUDIT_OUTCOME": "success",
+                "AUDIT_VERSION": "2.10.1",
+                "RUFF_OUTCOME": "success",
+                "RUFF_VERSION": "0.17.0",
+                "MYPY_OUTCOME": "failure",
+                "MYPY_VERSION": "2.4.0",
+                "COMPILE_OUTCOME": "skipped",
+                "BUILD_OUTCOME": "skipped",
+                "BUILD_PACKAGE": "true",
+                "PRIMARY": "true",
+                "TEST_TOOLS_OUTCOME": "success",
+                "TEST_RUNNER": "pytest",
+                "PYTEST_VERSION": "9.1.1",
+                "COVERAGE_VERSION": "7.16.2",
+                "TEST_OUTCOME": "success",
+            }
+        )
+        test_tools = "pytest 9.1.1, coverage 7.16.2"
+        self.assertEqual(
+            rows,
+            [
+                ("Validate inputs", "success", ""),
+                ("Install dependencies", "success", "uv 0.13.4"),
+                ("Audit dependencies", "success", "pip-audit 2.10.1"),
+                ("Lint with Ruff", "success", "Ruff 0.17.0"),
+                ("Type-check with mypy", "failure", "mypy 2.4.0"),
+                ("Check Python syntax", "skipped", ""),
+                ("Build and check package", "skipped", ""),
+                ("Install test tools", "success", test_tools),
+                ("Run tests and reject empty test suites", "success", test_tools),
+            ],
+        )
+
+    def test_disabled_and_once_per_run_checks_are_told_apart(self):
+        skipped = {
+            name: "skipped"
+            for name in (
+                "INSTALL_OUTCOME",
+                "AUDIT_OUTCOME",
+                "RUFF_OUTCOME",
+                "MYPY_OUTCOME",
+                "BUILD_OUTCOME",
+                "TEST_TOOLS_OUTCOME",
+            )
+        }
+        # A cell other than the primary one, with Ruff and the build enabled.
+        rows = self.summary_rows(
+            {
+                **skipped,
+                "VALIDATE_OUTCOME": "success",
+                "COMPILE_OUTCOME": "success",
+                "TEST_OUTCOME": "failure",
+                "PRIMARY": "false",
+                "RUFF_VERSION": "0.17.0",
+                "BUILD_PACKAGE": "true",
+                "INSTALLER": "pip",
+                "TEST_RUNNER": "unittest",
+                "PYTEST_VERSION": "9.1.1",
+            }
+        )
+        once = "skipped (runs on the primary cell)"
+        self.assertEqual(
+            rows,
+            [
+                ("Validate inputs", "success", ""),
+                ("Install dependencies", "not enabled", ""),
+                ("Audit dependencies", "not enabled", ""),
+                ("Lint with Ruff", once, "Ruff 0.17.0"),
+                ("Type-check with mypy", "not enabled", ""),
+                ("Check Python syntax", "success", ""),
+                ("Build and check package", once, ""),
+                ("Install test tools", "not enabled", ""),
+                ("Run tests and reject empty test suites", "failure", ""),
+            ],
+        )
+        # When validation fails, nothing else runs and no runner is resolved.
+        rows = self.summary_rows(
+            {
+                **skipped,
+                "VALIDATE_OUTCOME": "failure",
+                "COMPILE_OUTCOME": "skipped",
+                "TEST_OUTCOME": "skipped",
+                "MYPY_VERSION": "2.4.0",
+                "PYTEST_VERSION": "9.1.1",
+            }
+        )
+        self.assertEqual(
+            rows,
+            [
+                ("Validate inputs", "failure", ""),
+                ("Install dependencies", "not enabled", ""),
+                ("Audit dependencies", "not enabled", ""),
+                ("Lint with Ruff", "not enabled", ""),
+                ("Type-check with mypy", "skipped", "mypy 2.4.0"),
+                ("Check Python syntax", "skipped", ""),
+                ("Build and check package", "not enabled", ""),
+                ("Install test tools", "skipped", ""),
+                ("Run tests and reject empty test suites", "skipped", ""),
+            ],
+        )
+
+    def test_a_version_the_console_cannot_encode_still_gets_a_table(self):
+        # Windows runners print through the ANSI code page, and a failed validation
+        # leaves the versions unchecked.
+        with tempfile.TemporaryDirectory() as out:
+            summary = Path(out) / "summary.md"
+            result = self.execute(
+                {},
+                {
+                    "PYTHONIOENCODING": "cp1252",
+                    "GITHUB_STEP_SUMMARY": str(summary),
+                    "VALIDATE_OUTCOME": "failure",
+                    "MYPY_OUTCOME": "skipped",
+                    "MYPY_VERSION": "\u22651.11",
+                },
+                step="Summarise checks",
+            )
+            self.assertEqual(result.returncode, 0, result.stderr)
+            text = summary.read_text(encoding="utf-8")
+        self.assertIn("| Type-check with mypy | skipped | mypy \u22651.11 |", text)
+        self.assertIn("| Type-check with mypy | skipped | mypy ?1.11 |", result.stdout)
+
+
 def load_steps():
     spec = importlib.util.spec_from_file_location("python_ci_steps", STEPS)
     assert spec and spec.loader
@@ -2264,6 +2492,8 @@ class HarnessIsolationTests(StepHarness, unittest.TestCase):
             "JUNIT_FILE",
             "TEST_RUNNER",
             "PYTEST_ARGS",
+            "PRIMARY",
+            "TEST_OUTCOME",
         ):
             self.assertIn(name, INPUT_VARIABLES)
         self.assertNotIn("PATH", INPUT_VARIABLES)
