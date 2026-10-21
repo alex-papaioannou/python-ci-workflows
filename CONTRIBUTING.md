@@ -105,12 +105,24 @@ existing caller's run behave differently.
 Releasing is automated. To release, open a pull request that renames
 `## [Unreleased]` to `## [X.Y.Z] - YYYY-MM-DD`, deletes the subsections that stayed
 empty, and adds a fresh `## [Unreleased]` with every subsection heading above it.
-The released section becomes the release notes as written, so the test suite fails
-on one with an empty subsection. When the pull request merges, the `Release`
-workflow runs the smoke test, the example consumers and workflow lint again on that
-exact commit. Only if all of them pass does it create the `vX.Y.Z` GitHub release
-from that section and move the major tag (`vX`) to the same commit. Releases run
-only from `main`, in the `release` environment.
+The released section becomes the release notes, so the test suite fails on one with
+an empty subsection. The notes list Breaking changes, Changed defaults and Behaviour
+changes first, and end with the release commit's full SHA, a `uses:` line pinned to
+it and, from the second release on, a link comparing the release with the previous
+one. When the pull request merges, the `Release` workflow runs the smoke test, the
+example consumers and workflow lint again on that exact commit. Only if all of them
+pass does it create the `vX.Y.Z` GitHub release from that section and move the major
+tag (`vX`) to the same commit. Releases run only from `main`, in the `release`
+environment.
+
+After each release, open a pull request that updates the pinned SHA in the README:
+replace every `uses:` line pinned to the previous release, `# vX.Y.Z` comment
+included, with the line from the new release's notes. The release commit cannot
+name its own SHA, and `release.yml` does not commit to `main`, which changes only
+through pull requests. The test suite fails while the quick start pins a release
+older than the two newest in `CHANGELOG.md`, so the next release pull request cannot
+merge before this one. It also fails when the pinned SHA is not the commit of the
+release the comment names, which it looks up on GitHub when the tag is not fetched.
 
 From v2 on, the support policy gives the previous major version security fixes for
 six months, as patch releases from a maintenance branch. Before v3.0.0 ships, three

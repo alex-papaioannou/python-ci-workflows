@@ -17,21 +17,42 @@ permissions:
   contents: read
 jobs:
   python:
+    uses: alex-papaioannou/python-ci-workflows/.github/workflows/python-ci.yml@49d202ab203e05b7bd8a29376b0fa44188e9bdaa # v1.1.0
+```
+
+The `uses:` line pins the newest release by its full commit SHA, so the code you run
+changes only when you change that line, and the comment names the release.
+[Staying up to date](#staying-up-to-date) shows how Dependabot updates both. The
+notes of each release after v1.1.0 include its pinned line. For any release `vX.Y.Z`,
+this command prints the commit; if it prints two lines, the commit is the one ending
+in `^{}`:
+
+```sh
+git ls-remote https://github.com/alex-papaioannou/python-ci-workflows refs/tags/vX.Y.Z 'refs/tags/vX.Y.Z^{}'
+```
+
+The convenience option is the major tag, which follows every compatible release with
+no updates on your side:
+
+```yaml
     uses: alex-papaioannou/python-ci-workflows/.github/workflows/python-ci.yml@v1
 ```
 
-This runs the tests with `unittest`. For pytest tests, set `test-runner: pytest`
-under `with:`, or `test-runner: auto` to pick pytest when the project has pytest
-configuration, a `conftest.py` in `working-directory` or `test-directory`, or a
-`pytest` requirement in one of the places listed under `test-runner` in
-[Tests](#tests).
+zizmor's `unpinned-uses` audit flags `@v1`, because the tag moves to each new
+release; it accepts the SHA-pinned line.
+
+Either call runs the tests with `unittest`. For pytest tests, set
+`test-runner: pytest` under `with:`, or `test-runner: auto` to pick pytest when the
+project has pytest configuration, a `conftest.py` in `working-directory` or
+`test-directory`, or a `pytest` requirement in one of the places listed under
+`test-runner` in [Tests](#tests).
 
 A fuller configuration:
 
 ```yaml
 jobs:
   python:
-    uses: alex-papaioannou/python-ci-workflows/.github/workflows/python-ci.yml@v1
+    uses: alex-papaioannou/python-ci-workflows/.github/workflows/python-ci.yml@49d202ab203e05b7bd8a29376b0fa44188e9bdaa # v1.1.0
     with:
       python-versions: '["3.11", "3.12", "3.13", "3.14"]'
       operating-systems: '["ubuntu-latest", "windows-latest"]'
@@ -61,11 +82,13 @@ builds are easy to tell apart.
 
 ### Choosing a ref
 
+- A full commit SHA with a version comment, as in the quick start, never changes. It
+  is the most tamper-resistant choice and the only form zizmor's `unpinned-uses`
+  audit accepts by default, and Dependabot keeps it current.
 - `@v1` follows compatible releases of major version 1. Breaking changes ship only in
   a new major version, and [UPGRADING.md](UPGRADING.md) shows how to move to it. The
   [support policy](#support-policy) says what a release may change.
-- `@v1.2.3` or a full commit SHA never changes. A SHA is the most tamper-resistant
-  choice, and Dependabot can keep it current.
+- `@v1.2.3` names one release, but unlike a commit SHA, a tag can be moved.
 - `@main` gets unreleased changes and is not recommended for consumers.
 
 `alex-papaioannou/python-ci-workflows` is the permanent path: the repository will not
@@ -74,6 +97,50 @@ would break those calls.
 
 Checkout runs in the calling repository. Public consumers need this repository to be
 public.
+
+### Staying up to date
+
+Dependabot's `github-actions` ecosystem updates the refs of the reusable workflows
+your workflows call, as well as their actions, and rewrites a version comment on the
+same line, so the SHA and its `# vX.Y.Z` comment move together (see GitHub's
+[Keeping your actions up to date with Dependabot](https://docs.github.com/en/code-security/how-tos/secure-your-supply-chain/secure-your-dependencies/auto-update-actions)
+and its [caveats for GitHub Actions](https://docs.github.com/en/code-security/reference/supply-chain-security/supported-ecosystems-and-repositories#github-actions)).
+Each update is a pull request, so your CI runs the new release before you merge it.
+Add `.github/dependabot.yml` to the consuming repository:
+
+```yaml
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    # "/" covers the workflow files in .github/workflows.
+    directory: /
+    schedule:
+      interval: weekly
+    # Propose a release only once it is a week old.
+    cooldown:
+      default-days: 7
+    # One pull request for the minor and patch updates of all actions and
+    # reusable workflows; each major update gets a pull request of its own.
+    groups:
+      actions:
+        patterns: ["*"]
+        update-types: [minor, patch]
+```
+
+A major update can need changes to your workflow, so it stays out of the group; for
+this workflow, [UPGRADING.md](UPGRADING.md) lists those changes. Pin the commit of a
+release, as the quick start does: Dependabot moves a SHA that no release tag points
+at to the newest commit of this repository's default branch instead.
+
+To hear about releases yourself, choose **Watch > Custom > Releases** on
+[this repository's page](https://github.com/alex-papaioannou/python-ci-workflows),
+or subscribe a feed reader to
+<https://github.com/alex-papaioannou/python-ci-workflows/releases.atom>. The
+notes of each release after v1.1.0 list breaking changes, changed defaults and
+behaviour changes first, and end with the release's commit SHA, a `uses:` line
+pinned to it and a link comparing it with the previous release. The
+[support policy](#support-policy) says what each kind of release may change and how
+long a previous major version receives security fixes.
 
 ## Inputs
 
@@ -173,14 +240,13 @@ PyPI trusted publishing cannot run inside a reusable workflow, so the workflow o
 builds and, with `upload-dist`, uploads the `dist` artifact; publish it from a job in
 your own workflow.
 This suits pure-Python packages; projects with compiled extensions need their own
-wheel builds. Because this job can publish, consider pinning the workflow to a full
-commit SHA instead of `@v1` (see "Choosing a ref"); zizmor's `unpinned-uses` audit
-flags the tag.
+wheel builds. Because this workflow publishes what the reusable workflow built, keep
+it pinned to a full commit SHA, as below, rather than `@v1`.
 
 ```yaml
 jobs:
   python:
-    uses: alex-papaioannou/python-ci-workflows/.github/workflows/python-ci.yml@v1
+    uses: alex-papaioannou/python-ci-workflows/.github/workflows/python-ci.yml@49d202ab203e05b7bd8a29376b0fa44188e9bdaa # v1.1.0
     with:
       build-package: true
       test-wheel: true
@@ -210,11 +276,11 @@ Give calls that share a `working-directory` a distinct `call-name`:
 ```yaml
 jobs:
   api:
-    uses: alex-papaioannou/python-ci-workflows/.github/workflows/python-ci.yml@v1
+    uses: alex-papaioannou/python-ci-workflows/.github/workflows/python-ci.yml@49d202ab203e05b7bd8a29376b0fa44188e9bdaa # v1.1.0
     with:
       working-directory: services/api
   web:
-    uses: alex-papaioannou/python-ci-workflows/.github/workflows/python-ci.yml@v1
+    uses: alex-papaioannou/python-ci-workflows/.github/workflows/python-ci.yml@49d202ab203e05b7bd8a29376b0fa44188e9bdaa # v1.1.0
     with:
       working-directory: services/web
 ```
@@ -246,7 +312,7 @@ listing every matrix job. The same value is exposed as the `result` output:
 ```yaml
 jobs:
   python:
-    uses: alex-papaioannou/python-ci-workflows/.github/workflows/python-ci.yml@v1
+    uses: alex-papaioannou/python-ci-workflows/.github/workflows/python-ci.yml@49d202ab203e05b7bd8a29376b0fa44188e9bdaa # v1.1.0
   notify:
     needs: python
     if: always()
