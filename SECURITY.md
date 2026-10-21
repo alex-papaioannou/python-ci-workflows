@@ -15,8 +15,9 @@ contact and contains no vulnerability details.
 The latest release of the current major version receives fixes. The major tag (such
 as `v1`) moves to every new release of that major version, so a caller pinned to
 `@v1` picks up fixes, and any other change, automatically. To review each update
-before it runs, pin a full commit SHA instead; see
-[Choosing a ref](README.md#choosing-a-ref).
+before it runs, pin a full commit SHA instead, as the README's quick start does; see
+[Choosing a ref](README.md#choosing-a-ref) and
+[Staying up to date](README.md#staying-up-to-date).
 
 v1 receives no releases after v2.0.0. From v2 on, when a new major version is
 released, the previous major version receives security fixes, as patch releases of

@@ -10,6 +10,11 @@ import tempfile
 import unittest
 from pathlib import Path
 
+try:
+    import yaml
+except ImportError:  # pragma: no cover - requirements-dev.txt installs PyYAML
+    yaml = None  # type: ignore[assignment]
+
 SCRIPT = Path(__file__).parents[1] / ".github/scripts/release_notes.py"
 spec = importlib.util.spec_from_file_location("release_notes", SCRIPT)
 assert spec and spec.loader
@@ -17,6 +22,43 @@ release_notes = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(release_notes)
 ROOT = SCRIPT.parents[2]
 UPGRADE_LINK = re.compile(r"\]\((?:\./)?UPGRADING\.md#([^)\s]*)\)")
+COMMIT = "0123456789abcdef" * 2 + "01234567"
+PINNING = "\n### Pinning this release\n"
+WORKFLOW_CALL = re.compile(
+    r"^ +uses: alex-papaioannou/python-ci-workflows/\.github/workflows/"
+    r"python-ci\.yml@(.*)$",
+    re.MULTILINE,
+)
+PINNED_RELEASE = re.compile(r"([0-9a-f]{40}) # v([0-9]+\.[0-9]+\.[0-9]+)")
+REPOSITORY_URL = "https://github.com/alex-papaioannou/python-ci-workflows"
+
+
+def readme_section(title):
+    """Return the body of the README's level-two section with this title."""
+    readme = (ROOT / "README.md").read_text(encoding="utf-8")
+    return re.search(rf"(?ms)^## {title}\n(.*?)^## ", readme).group(1)
+
+
+def yaml_blocks(markdown):
+    """Return the contents of the YAML code blocks in a Markdown document."""
+    return re.findall(r"(?ms)^```yaml\n(.*?)^```", markdown)
+
+
+def git(*args):
+    """Run git in the repository; return the result, or None if it cannot run."""
+    try:
+        return subprocess.run(
+            ["git", *args],
+            cwd=ROOT,
+            # The repository is public, so never wait for credentials.
+            env={**os.environ, "GIT_TERMINAL_PROMPT": "0"},
+            text=True,
+            capture_output=True,
+            check=False,
+            timeout=60,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return None
 
 
 def github_anchors(markdown):
@@ -163,7 +205,7 @@ class IntroducedTests(unittest.TestCase):
 
 
 class MainTests(unittest.TestCase):
-    def run_main(self, changelog, released="", previous=None):
+    def run_main(self, changelog, released="", previous=None, commit=COMMIT):
         """Run the script; return its result, its outputs and the notes it wrote."""
         with tempfile.TemporaryDirectory() as work:
             root = Path(work)
@@ -178,6 +220,7 @@ class MainTests(unittest.TestCase):
                 "GITHUB_OUTPUT": str(root / "output"),
                 "GITHUB_SERVER_URL": "https://github.example",
                 "GITHUB_REPOSITORY": "owner/repo",
+                "GITHUB_SHA": commit,
             }
             result = subprocess.run(
                 args, cwd=root, env=env, text=True, capture_output=True, check=False
@@ -196,7 +239,7 @@ class MainTests(unittest.TestCase):
         )
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(output, "version=1.1.0\nmajor=v1\nintroduced=true\n")
-        self.assertEqual(notes, "- New.\n")
+        self.assertEqual(notes.partition(PINNING)[0], "- New.\n")
 
     def test_lower_version_fails_before_any_output(self):
         result, output, notes = self.run_main("## [0.9.0]\n\n- Old.\n", "v1.0.0\n")
@@ -264,11 +307,101 @@ class MainTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         guide = "https://github.example/owner/repo/blob/v2.0.0/UPGRADING.md"
         self.assertEqual(
-            notes,
+            notes.partition(PINNING)[0],
             "### Breaking changes\n\n"
             f"- Removed `a`. See [UPGRADING.md]({guide}#a-is-removed).\n"
             f"- Renamed `b`. See [the guide]({guide}) and [c](OTHER.md#c).\n",
         )
+
+    def test_notes_list_caller_impact_first_and_end_with_the_pinned_release(self):
+        result, _, notes = self.run_main(
+            "## [1.2.0]\n\n### Added\n\n- New.\n\n### Fixed\n\n- Bug.\n\n"
+            "### Behaviour changes\n\n- Fails now.\n\n## [1.1.0]\n\n- Old.\n",
+            "v1.1.0\nv1\nv1.0.0\n",
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(
+            notes,
+            "### Behaviour changes\n\n- Fails now.\n\n### Added\n\n- New.\n\n"
+            "### Fixed\n\n- Bug.\n\n### Pinning this release\n\n"
+            f"This release is commit `{COMMIT}`. To pin a caller to it, use this "
+            "line:\n\n```yaml\n"
+            f"    uses: owner/repo/.github/workflows/python-ci.yml@{COMMIT} # v1.2.0\n"
+            "```\n\n**Full changelog**: "
+            "https://github.example/owner/repo/compare/v1.1.0...v1.2.0\n",
+        )
+
+    def test_compare_link_names_the_release_before_this_one(self):
+        for released, link in (
+            ("v1.1.0\nv1\nv1.0.0\n", "/compare/v1.1.0...v1.2.0\n"),
+            # A re-run, after the release exists, still compares with the one before.
+            ("v1.2.0\nv1\nv1.1.0\nv1.0.0\n", "/compare/v1.1.0...v1.2.0\n"),
+            ("v1.1.10\nv1.1.9\n", "/compare/v1.1.10...v1.2.0\n"),
+        ):
+            with self.subTest(released=released):
+                result, _, notes = self.run_main("## [1.2.0]\n\n- New.\n", released)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertTrue(notes.endswith(link), notes)
+        # A patch release of an older major version compares within that version.
+        self.assertEqual(
+            release_notes.release_before("1.2.1", ["v2.0.0", "v1.2.0", "v1"]),
+            (1, 2, 0),
+        )
+
+    def test_first_release_has_a_pinned_line_but_no_compare_link(self):
+        for released in ("", "v1\nnot-a-release\n"):
+            with self.subTest(released=released):
+                result, _, notes = self.run_main("## [1.0.0]\n\n- First.\n", released)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertIn(f"python-ci.yml@{COMMIT} # v1.0.0\n```\n", notes)
+                self.assertNotIn("compare", notes)
+                self.assertTrue(notes.endswith("```\n"), notes)
+
+    def test_malformed_commit_fails_before_any_output(self):
+        for commit in ("main", COMMIT[:12], COMMIT.upper(), ""):
+            with self.subTest(commit=commit):
+                result, output, notes = self.run_main(
+                    "## [1.1.0]\n\n- New.\n", "v1.0.0\n", commit=commit
+                )
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn("is not a full commit SHA", result.stderr)
+                self.assertEqual((output, notes), ("", ""))
+
+
+class ImpactFirstTests(unittest.TestCase):
+    def test_caller_impact_subsections_come_first_in_a_fixed_order(self):
+        notes = (
+            "Intro.\n\n### Added\n\n- New.\n\n### Behaviour changes\n\n- Fails.\n\n"
+            "### Security\n\n- Fix.\n\n### Changed defaults\n\n- Default.\n\n"
+            "### Breaking changes\n\n- Removed.\n"
+        )
+        self.assertEqual(
+            release_notes.impact_first(notes),
+            "Intro.\n\n### Breaking changes\n\n- Removed.\n\n"
+            "### Changed defaults\n\n- Default.\n\n### Behaviour changes\n\n"
+            "- Fails.\n\n### Added\n\n- New.\n\n### Security\n\n- Fix.\n",
+        )
+
+    def test_deeper_headings_and_code_blocks_stay_in_their_subsection(self):
+        notes = (
+            "### Added\n\n- New:\n\n  ```md\n### Changed defaults\n  ```\n\n"
+            "### CHANGED DEFAULTS\n\n#### Inputs\n\n- `a` is 2.\n"
+        )
+        self.assertEqual(
+            release_notes.impact_first(notes),
+            "### CHANGED DEFAULTS\n\n#### Inputs\n\n- `a` is 2.\n\n"
+            "### Added\n\n- New:\n\n  ```md\n### Changed defaults\n  ```\n",
+        )
+
+    def test_notes_already_in_order_are_unchanged(self):
+        changelog = (ROOT / "CHANGELOG.md").read_text(encoding="utf-8")
+        for notes in (
+            "- Only.\n",
+            "### Changed defaults\n\n- A.\n\n### Added\n\n- B.\n",
+            release_notes.sections(changelog)[-1][1] + "\n",
+        ):
+            with self.subTest(notes=notes[:40]):
+                self.assertEqual(release_notes.impact_first(notes), notes)
 
 
 class BreakingChangesTests(unittest.TestCase):
@@ -570,3 +703,78 @@ class ReleaseOrderTests(unittest.TestCase):
         self.assertRegex(version, r"^\d+\.\d+\.\d+$")
         self.assertTrue(major.startswith("v"))
         self.assertTrue(notes.strip())
+
+
+class ReadmePinTests(unittest.TestCase):
+    def quick_start_pin(self):
+        """Return (ref, commit, version) of the quick start's first snippet."""
+        first = yaml_blocks(readme_section("Quick start"))[0]
+        (ref,) = WORKFLOW_CALL.findall(first)
+        pinned = PINNED_RELEASE.fullmatch(ref)
+        self.assertIsNotNone(pinned, f"not a full SHA with a '# vX.Y.Z' comment: {ref}")
+        return ref, pinned.group(1), pinned.group(2)
+
+    def test_quick_start_pins_one_of_the_two_newest_releases(self):
+        # The README can name a release only after it exists, so the pull request
+        # that updates the pin follows the release; until then it names the one
+        # before.
+        _, _, version = self.quick_start_pin()
+        changelog = (ROOT / "CHANGELOG.md").read_text(encoding="utf-8")
+        releases = [
+            ".".join(match.groups())
+            for title, _ in release_notes.sections(changelog)
+            if (match := release_notes.VERSION_HEADING.fullmatch(title))
+        ]
+        self.assertIn(version, releases[:2])
+
+    def test_every_readme_call_uses_the_pin_or_the_major_tag(self):
+        ref, _, version = self.quick_start_pin()
+        readme = (ROOT / "README.md").read_text(encoding="utf-8")
+        major = "v" + version.split(".")[0]
+        calls = WORKFLOW_CALL.findall(readme)
+        self.assertEqual(set(calls), {ref, major})
+        # The major tag is only the quick start's convenience option.
+        self.assertEqual(calls.count(major), 1)
+
+    def test_quick_start_pin_is_the_release_commit(self):
+        # CI checks out one commit without tags, so the tag is looked up on GitHub
+        # when it is not fetched, and a mistyped SHA in the pull request that
+        # updates the pin fails CI. The test skips only when GitHub is unreachable.
+        _, commit, version = self.quick_start_pin()
+        tag = f"refs/tags/v{version}"
+        local = git("rev-parse", "--verify", "--quiet", tag + "^{commit}")
+        if local and local.returncode == 0:
+            self.assertEqual(local.stdout.strip(), commit)
+            return
+        # --exit-code exits with 2 when there is no such tag, and with another
+        # status when GitHub cannot be reached. An annotated tag's commit is the
+        # line for "<tag>^{}".
+        remote = git("ls-remote", "--exit-code", REPOSITORY_URL, tag, tag + "^{}")
+        if remote is None or remote.returncode not in (0, 2):
+            reason = remote.stderr.strip() if remote else "git did not run"
+            self.skipTest(f"cannot list the tags of {REPOSITORY_URL}: {reason}")
+        refs = {
+            name: sha
+            for sha, name in (line.split("\t") for line in remote.stdout.splitlines())
+        }
+        self.assertIn(tag, refs, f"{REPOSITORY_URL} has no tag v{version}")
+        self.assertEqual(refs.get(tag + "^{}", refs[tag]), commit)
+
+    @unittest.skipUnless(yaml, "needs PyYAML")
+    def test_dependabot_configuration_groups_updates_with_a_cooldown(self):
+        (block,) = [
+            block
+            for block in yaml_blocks(readme_section("Quick start"))
+            if "package-ecosystem" in block
+        ]
+        config = yaml.safe_load(block)
+        self.assertEqual(config["version"], 2)
+        (update,) = config["updates"]
+        self.assertEqual(update["package-ecosystem"], "github-actions")
+        self.assertEqual(update["directory"], "/")
+        self.assertGreater(update["cooldown"]["default-days"], 0)
+        # Every update is grouped except a new major version, which gets its own
+        # pull request.
+        (group,) = update["groups"].values()
+        self.assertEqual(group["patterns"], ["*"])
+        self.assertEqual(sorted(group["update-types"]), ["minor", "patch"])

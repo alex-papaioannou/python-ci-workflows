@@ -36,6 +36,14 @@ major tag such as `v1`, an exact release, or a commit SHA.
   `test_` functions, or the project has pytest configuration, the error now says to
   set `test-runner: pytest`. It also suggests `auto` when the project has one of the
   files or settings that make `auto` pick pytest.
+- The README's examples pin the newest release by full commit SHA with a
+  `# vX.Y.Z` comment, which zizmor's `unpinned-uses` audit accepts, and the quick
+  start shows `@v1` as the convenience option. A new "Staying up to date" section
+  gives a consumer `dependabot.yml` that groups minor and patch updates and sets a
+  cooldown, and explains how to watch releases. The test suite checks that the
+  pinned SHA is the commit of the release its comment names.
+- Release notes end with the release commit's full SHA, a `uses:` line pinned to it
+  and a link comparing the release with the previous one.
 
 ### Changed
 
@@ -49,6 +57,8 @@ major tag such as `v1`, an exact release, or a commit SHA.
   pytest-xdist workers through the workflow's pytest runner. `requirements-dev.txt`
   now also locks build and twine at the versions the build step installs, so
   parallel tests never install them into the same interpreter at once.
+- Release notes list Breaking changes, Changed defaults and Behaviour changes before
+  the other subsections.
 
 ### Fixed
 
