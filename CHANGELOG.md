@@ -78,6 +78,18 @@ major tag such as `v1`, an exact release, or a commit SHA.
   it adds that `ruff format` also checks Python code blocks in Markdown files from
   0.16. It suggests choosing rules with `lint.select` or setting `lint-paths` to
   narrow the checks. Ruff's results are unchanged.
+- `env` input: a JSON object of environment variables, such as
+  `{"DJANGO_SETTINGS_MODULE": "mysite.settings"}`, set for every step after input
+  validation. A called workflow does not inherit its caller's `env`, so a project
+  whose install, build or tests read a variable can now pass it. Validation requires
+  names of ASCII letters, digits and underscores, not starting with a digit, and
+  string values. It rejects, ignoring case, `GITHUB_*`, `RUNNER_*`, `ACTIONS_*`,
+  `PATH`, `NODE_OPTIONS`, `BASH_ENV`, `ENV`, `SHELLOPTS`, `BASHOPTS`, `PS4`,
+  `PYTHON_CI_STEPS`, `PYTHONHASHSEED`, `PYTHONWARNINGS` and every variable the
+  workflow sets for its own steps. It also rejects two names that differ only in
+  case. Each variable is written to `GITHUB_ENV` with a random delimiter, so a value
+  with newlines stays one variable. Values appear in the job logs, so the input is
+  for values that are not secret. The default, `{}`, sets nothing.
 
 ### Changed
 

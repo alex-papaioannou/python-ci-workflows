@@ -1,7 +1,9 @@
 """Run the workflow's step scripts against temporary consumer projects."""
 
 import argparse
+import contextlib
 import importlib.util
+import io
 import json
 import os
 import re
@@ -120,6 +122,7 @@ class StepHarness:
             GITHUB_WORKSPACE=str(root),
             GITHUB_STEP_SUMMARY=os.devnull,
             GITHUB_OUTPUT=os.devnull,
+            GITHUB_ENV=os.devnull,
             RUNNER_TEMP=runner_temp,
             TMPDIR=system_temp,
             TEMP=system_temp,
@@ -1130,6 +1133,213 @@ class WorkflowTests(StepHarness, unittest.TestCase):
         )
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("KeyError", result.stderr)
+
+
+def github_env_entries(text):
+    """Return the (name, value) pairs a GITHUB_ENV file sets, read as the runner does.
+
+    An entry is NAME=VALUE on one line, or a NAME<<DELIMITER line followed by the
+    value's lines and a line that is exactly the delimiter.
+    """
+    entries = []
+    lines = iter(text.split("\n"))
+    for line in lines:
+        if not line:
+            continue
+        equals, heredoc = line.find("="), line.find("<<")
+        if heredoc < 0 or 0 <= equals < heredoc:
+            name, value = line.split("=", 1)
+            entries.append((name, value))
+            continue
+        name, delimiter = line.split("<<", 1)
+        value_lines = []
+        for value_line in lines:
+            if value_line == delimiter:
+                break
+            value_lines.append(value_line)
+        else:
+            raise AssertionError(f"{name} has no closing delimiter {delimiter!r}")
+        entries.append((name, "\n".join(value_lines)))
+    return entries
+
+
+class CallerEnvTests(StepHarness, unittest.TestCase):
+    def validate(self, value, **env):
+        """Run 'Validate inputs' with the env input; return the result and GITHUB_ENV."""
+        with tempfile.TemporaryDirectory() as directory:
+            github_env = Path(directory, "github_env")
+            result = self.execute(
+                {"tests/test_ok.py": ""},
+                {**env, "CALLER_ENV": value, "GITHUB_ENV": str(github_env)},
+                step="Validate inputs",
+            )
+            text = ""
+            if github_env.exists():
+                with open(github_env, encoding="utf-8", newline="") as file:
+                    text = file.read()
+        return result, text
+
+    def assert_rejected(self, value, message):
+        result, text = self.validate(value)
+        self.assertNotEqual(result.returncode, 0, result.stdout)
+        # Every message starts with the input's name.
+        self.assertRegex(result.stderr, rf"(?m)^env {re.escape(message)}")
+        self.assertEqual(text, "")
+
+    def test_variables_are_set_for_later_steps_in_heredoc_form(self):
+        variables = {"DJANGO_SETTINGS_MODULE": "mysite.settings", "FEATURE_FLAG": "on"}
+        result, text = self.validate(json.dumps(variables))
+        self.assertEqual(result.returncode, 0, result.stderr)
+        for name in variables:
+            self.assertRegex(text, rf"(?m)^{name}<<\S+$")
+        self.assertEqual(github_env_entries(text), list(variables.items()))
+        self.assertIn("env sets DJANGO_SETTINGS_MODULE, FEATURE_FLAG", result.stdout)
+
+    def test_the_default_sets_nothing(self):
+        for value in ("{}", ""):
+            with self.subTest(value=value):
+                result, text = self.validate(value)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertEqual(text, "")
+
+    def test_a_value_with_newlines_stays_one_variable(self):
+        # Lines shaped like a delimiter, an assignment or a heredoc header are value.
+        cases = {
+            "delimiter-shaped lines": (
+                "first\nEOF\nPYTHON_CI_ENV_" + "0" * 32 + "\nOTHER=1\nOTHER<<EOF\nlast"
+            ),
+            "Windows line endings": "first\r\nsecond\r\n",
+            "a trailing newline": "only\n",
+            "an empty value": "",
+        }
+        for case, value in cases.items():
+            with self.subTest(case=case):
+                result, text = self.validate(json.dumps({"MULTI": value}))
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertEqual(github_env_entries(text), [("MULTI", value)])
+
+    def test_a_delimiter_the_value_contains_is_drawn_again(self):
+        steps = load_steps()
+        taken = "PYTHON_CI_ENV_" + "a" * 32
+        value = f"before\n{taken}\nafter"
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory, "github_env")
+            with (
+                unittest.mock.patch.dict(os.environ, {"GITHUB_ENV": str(path)}),
+                unittest.mock.patch.object(
+                    steps.secrets, "token_hex", side_effect=["a" * 32, "b" * 32]
+                ),
+                contextlib.redirect_stdout(io.StringIO()),
+            ):
+                steps.export_env({"MULTI": value})
+            with open(path, encoding="utf-8", newline="") as file:
+                text = file.read()
+        self.assertTrue(text.startswith(f"MULTI<<PYTHON_CI_ENV_{'b' * 32}\n"), text)
+        self.assertEqual(github_env_entries(text), [("MULTI", value)])
+
+    def test_reserved_names_are_rejected(self):
+        # Windows ignores case in variable names, so every spelling is rejected.
+        names = (
+            "GITHUB_TOKEN",
+            "GITHUB_PATH",
+            "github_output",
+            "RUNNER_TEMP",
+            "ACTIONS_RUNTIME_TOKEN",
+            "PATH",
+            "path",
+            "Path",
+            "NODE_OPTIONS",
+            "BASH_ENV",
+            "ENV",
+            "env",
+            "SHELLOPTS",
+            "shellopts",
+            "BASHOPTS",
+            "PS4",
+            "PYTHONHASHSEED",
+            "PYTHONWARNINGS",
+            "pythonwarnings",
+            "PYTHON_CI_STEPS",
+            "TEST_RUNNER",
+            "CALLER_ENV",
+        )
+        for name in names:
+            with self.subTest(name=name):
+                self.assert_rejected(json.dumps({name: "x"}), f"may not set {name}:")
+
+    def test_every_variable_the_workflow_maps_is_rejected(self):
+        steps = load_steps()
+        for name in sorted(INPUT_VARIABLES):
+            for spelling in (name, name.lower()):
+                with self.subTest(name=spelling):
+                    with (
+                        unittest.mock.patch.dict(
+                            os.environ, {"CALLER_ENV": json.dumps({spelling: "x"})}
+                        ),
+                        self.assertRaises(SystemExit) as raised,
+                    ):
+                        steps.caller_env()
+                    self.assertIn(f"env may not set {spelling}:", str(raised.exception))
+
+    def test_invalid_names_are_rejected(self):
+        for name in ("1ST", "MY-VAR", "MY VAR", "", "A=B", "NAME\nOTHER", "\u00c4PFEL"):
+            with self.subTest(name=name):
+                self.assert_rejected(
+                    json.dumps({name: "x"}),
+                    f"has an invalid variable name {json.dumps(name)}",
+                )
+
+    def test_values_that_are_not_strings_are_rejected(self):
+        for value in (1, 1.5, True, None, ["on"], {"on": "yes"}):
+            with self.subTest(value=value):
+                self.assert_rejected(
+                    json.dumps({"FLAG": value}),
+                    f"must give FLAG a string value, not {json.dumps(value)}",
+                )
+        self.assert_rejected(
+            json.dumps({"FLAG": "a\0b"}), "gives FLAG a value with a NUL character"
+        )
+        # A lone surrogate, which UTF-8 cannot encode, after a value that can be.
+        self.assert_rejected(
+            json.dumps({"FIRST": "on", "FLAG": "\ud800"}),
+            "gives FLAG a value that is not valid Unicode",
+        )
+
+    def test_the_harness_leaves_the_outer_github_env_alone(self):
+        # This repository's CI runs the suite inside a job with its own GITHUB_ENV.
+        with tempfile.TemporaryDirectory() as directory:
+            outer = Path(directory, "github_env")
+            outer.write_text("")
+            with unittest.mock.patch.dict(os.environ, {"GITHUB_ENV": str(outer)}):
+                result = self.execute(
+                    {"tests/test_ok.py": ""},
+                    {"CALLER_ENV": json.dumps({"FLAG": "on"})},
+                    step="Validate inputs",
+                )
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertEqual(outer.read_text(), "")
+
+    def test_names_that_differ_only_in_case_are_rejected(self):
+        # Windows would set one variable, Linux and macOS two.
+        self.assert_rejected(
+            json.dumps({"Flag": "1", "FLAG": "2"}), "sets both Flag and FLAG:"
+        )
+
+    def test_values_that_are_not_json_objects_are_rejected(self):
+        for value in ("[]", '["FLAG=on"]', '"FLAG=on"', "1", "null", "FLAG=on", "{"):
+            with self.subTest(value=value):
+                self.assert_rejected(
+                    value, "must be a JSON object of variable names and string values"
+                )
+
+    def test_nothing_is_set_when_validation_fails(self):
+        # matrix-exclude is checked last, so env is set only after every check passes.
+        result, text = self.validate(
+            json.dumps({"FLAG": "on"}), MATRIX_EXCLUDE='[{"os": "nowhere"}]'
+        )
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("names an os not in operating-systems", result.stderr)
+        self.assertEqual(text, "")
 
 
 RUFF = {"RUFF_VERSION": "0.17.0", "LINT_PATHS": '["."]'}

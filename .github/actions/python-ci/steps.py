@@ -12,6 +12,7 @@ import glob
 import json
 import os
 import re
+import secrets
 import shlex
 import subprocess
 import sys
@@ -440,6 +441,150 @@ def resolve_installer(requirements: str) -> str:
     return installer
 
 
+# Names the env input may not set, each with the reason. Windows ignores case in
+# environment variable names, so they are compared in upper case.
+RESERVED_ENV = {
+    "PATH": "the runner and every step depend on it",
+    "NODE_OPTIONS": "Node.js reads it in the JavaScript actions the job runs",
+    "BASH_ENV": "bash runs the file it names before every script",
+    "ENV": "a shell may run the file it names when it starts",
+    "SHELLOPTS": "bash applies the options it lists to every script",
+    "BASHOPTS": "bash applies the options it lists to every script",
+    "PS4": "bash expands it, running any command it holds, before each traced command",
+    "PYTHON_CI_STEPS": "it locates the workflow's step scripts",
+    "PYTHONHASHSEED": "set it with the hash-seed input",
+    "PYTHONWARNINGS": "set it with the warnings-as-errors input",
+}
+RESERVED_ENV_PREFIXES = ("GITHUB_", "RUNNER_", "ACTIONS_")
+# Every variable python-ci.yml maps into a step. The steps read their configuration
+# only from these, so env may not set them either; tests/test_env_contract.py keeps
+# this set in step with the workflow.
+WORKFLOW_VARIABLES = {
+    "AUDIT_IGNORE",
+    "AUDIT_OUTCOME",
+    "AUDIT_VERSION",
+    "BUILD_OUTCOME",
+    "BUILD_PACKAGE",
+    "CALLER_ENV",
+    "CALL_NAME",
+    "COMPILE_EXCLUDE",
+    "COMPILE_OUTCOME",
+    "COMPILE_PATHS",
+    "COVERAGE_FAIL_UNDER",
+    "COVERAGE_VERSION",
+    "DOCTEST_PATHS",
+    "EXPERIMENTAL_PYTHON_VERSIONS",
+    "INSTALLER",
+    "INSTALL_OUTCOME",
+    "INSTALL_PROJECT",
+    "JUNIT_FILE",
+    "LINT_PATHS",
+    "MATRIX_EXCLUDE",
+    "MATRIX_OS",
+    "MATRIX_PYTHON",
+    "MYPY_OUTCOME",
+    "MYPY_VERSION",
+    "OPERATING_SYSTEMS",
+    "PRIMARY",
+    "PROJECT_EXTRAS",
+    "PYTEST_ARGS",
+    "PYTEST_VERSION",
+    "PYTHON_VERSIONS",
+    "REQUIREMENTS_FILE",
+    "REQUIRE_HASHES",
+    "RUFF_FORMAT",
+    "RUFF_OUTCOME",
+    "RUFF_VERSION",
+    "TEST_DIRECTORY",
+    "TEST_FAIL_FAST",
+    "TEST_OUTCOME",
+    "TEST_PATTERN",
+    "TEST_RUNNER",
+    "TEST_TOOLS_OUTCOME",
+    "TEST_VERBOSITY",
+    "TEST_WHEEL",
+    "TOP_LEVEL_DIRECTORY",
+    "UPLOAD_DIST",
+    "UV_VERSION",
+    "VALIDATE_OUTCOME",
+    "WORKING_DIRECTORY",
+}
+
+
+def caller_env() -> dict[str, str]:
+    """Return the variables the env input sets, after checking every name and value."""
+    try:
+        variables = json.loads(env("CALLER_ENV") or "{}")
+    except ValueError:
+        variables = None
+    if not isinstance(variables, dict):
+        raise SystemExit(
+            "env must be a JSON object of variable names and string values"
+        )
+    seen: dict[str, str] = {}
+    for name, value in variables.items():
+        if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", name):
+            raise SystemExit(
+                f"env has an invalid variable name {json.dumps(name)}: use ASCII "
+                "letters, digits and underscores, and do not start with a digit"
+            )
+        upper = name.upper()
+        if upper in seen:
+            raise SystemExit(
+                f"env sets both {seen[upper]} and {name}: Windows ignores case in "
+                "variable names, so they would be one variable there"
+            )
+        seen[upper] = name
+        if upper.startswith(RESERVED_ENV_PREFIXES):
+            raise SystemExit(
+                f"env may not set {name}: names starting with GITHUB_, RUNNER_ or "
+                "ACTIONS_ belong to the runner"
+            )
+        if upper in RESERVED_ENV:
+            raise SystemExit(f"env may not set {name}: {RESERVED_ENV[upper]}")
+        if upper in WORKFLOW_VARIABLES:
+            raise SystemExit(
+                f"env may not set {name}: the workflow sets it for its own steps"
+            )
+        if not isinstance(value, str):
+            raise SystemExit(
+                f"env must give {name} a string value, not {json.dumps(value)}"
+            )
+        # Windows separates the variables of a process environment with NUL, so one
+        # inside a value could add another variable.
+        if "\0" in value:
+            raise SystemExit(f"env gives {name} a value with a NUL character")
+        # JSON can escape a lone surrogate, which UTF-8 cannot encode.
+        try:
+            value.encode("utf-8")
+        except UnicodeEncodeError:
+            raise SystemExit(
+                f"env gives {name} a value that is not valid Unicode"
+            ) from None
+    return variables
+
+
+def export_env(variables: dict[str, str]) -> None:
+    """Set the env input's variables for the later steps through GITHUB_ENV.
+
+    Each one is written as NAME<<DELIMITER, with a random delimiter that the value
+    does not contain, so a value with newlines stays one variable.
+    """
+    if not variables or not env("GITHUB_ENV"):
+        return
+    entries = []
+    for name, value in variables.items():
+        delimiter = "PYTHON_CI_ENV_" + secrets.token_hex(16)
+        while delimiter in value:
+            delimiter = "PYTHON_CI_ENV_" + secrets.token_hex(16)
+        entries.append(f"{name}<<{delimiter}\n{value}\n{delimiter}\n")
+    # One write, so a failure cannot leave some of the variables set. No newline
+    # translation, so a value keeps its line endings on Windows too.
+    with open(env("GITHUB_ENV"), "a", encoding="utf-8", newline="") as file:
+        file.write("".join(entries))
+    print(f"env sets {', '.join(variables)} for the later steps")
+
+
 def validate() -> int:
     check_directory("TEST_DIRECTORY", "test-directory")
     check_directory("TOP_LEVEL_DIRECTORY", "top-level-directory")
@@ -523,6 +668,7 @@ def validate() -> int:
     if "/" in pattern or "\\" in pattern:
         raise SystemExit("test-pattern must be a filename glob, not a path")
     re.compile(env("COMPILE_EXCLUDE"))
+    variables = caller_env()
     warn_about_inputs_without_effect()
     write_outputs(
         {
@@ -532,6 +678,8 @@ def validate() -> int:
             **matrix_cell(),
         }
     )
+    # Last, so a call that fails validation passes nothing on to later steps.
+    export_env(variables)
     return 0
 
 

@@ -145,7 +145,7 @@ long a previous major version receives security fixes.
 ## Inputs
 
 All inputs are optional. Paths are relative to `working-directory` and must stay
-inside the checkout. JSON arrays are passed as strings. "Added in" names the release
+inside the checkout. JSON arrays and objects are passed as strings. "Added in" names the release
 that introduced the input; Unreleased means it is on `main` but not in a release yet.
 
 ### Matrix and job
@@ -163,6 +163,7 @@ that introduced the input; Unreleased means it is on `main` but not in a release
 | `call-name` | string | `""` | 1.1.0 | Name for this call when one caller workflow calls the workflow more than once with the same `working-directory`. Letters, digits, `.`, `_` and `-`. |
 | `result-runner` | string | `ubuntu-latest` | 1.1.0 | Runner for the final `result` job, which needs no Python: a label, or one runner in JSON as a single `operating-systems` entry would be: an array of labels it must all have, or a runner-group object. Set it when GitHub-hosted runners are unavailable. |
 | `working-directory` | string | `.` | 1.0.0 | Project directory inside the checkout, for monorepos. |
+| `env` | string | `{}` | Unreleased | JSON object of environment variables set for every step after input validation, such as `{"DJANGO_SETTINGS_MODULE": "mysite.settings"}`, so the install, the checks, the build and the tests all see them. A called workflow does not inherit its caller's `env`, so pass the variables your project needs here. Names are ASCII letters, digits and `_`, not starting with a digit, and values are strings. Validation rejects, ignoring case, these names, which the runner, the shells and the workflow use: `GITHUB_*`, `RUNNER_*`, `ACTIONS_*`, `PATH`, `NODE_OPTIONS`, `BASH_ENV`, `ENV`, `SHELLOPTS`, `BASHOPTS`, `PS4`, `PYTHON_CI_STEPS`, `PYTHONHASHSEED` and `PYTHONWARNINGS` (set these two with `hash-seed` and `warnings-as-errors`), and every variable the workflow sets for its own steps, such as `TEST_DIRECTORY`. It also rejects two names that differ only in case, which Windows would treat as one variable. Values appear in the job logs, so use it only for values that are not secret. |
 
 ### Dependencies
 
@@ -369,7 +370,8 @@ where noted.
    between runs.
 3. Validate inputs: paths, JSON arrays, versions, globs and regexes. Choose the test
    runner for `test-runner: auto`, and uv as the installer for a `uv.lock` or
-   `pylock.toml`. Bad configuration fails here, before any project code runs.
+   `pylock.toml`. Bad configuration fails here, before any project code runs. Once
+   every input is valid, set the `env` variables for the steps that follow.
 4. Install requirements and the project, then audit them.
 5. Run Ruff, then mypy.
 6. Byte-compile `compile-paths`.
@@ -499,9 +501,9 @@ request:
 
 - `stdlib-app`: unittest, doctests, 100% coverage and warnings as errors.
 - `src-package`: a src-layout package whose pytest tests run through
-  `test-runner: auto` on Linux and Windows, an editable install with extras, and a
-  package build whose wheel is built and tested once, on the primary cell (Linux,
-  Python 3.11).
+  `test-runner: auto` on Linux and Windows, an editable install with extras, an
+  `env` variable the tests check, and a package build whose wheel is built and
+  tested once, on the primary cell (Linux, Python 3.11).
 - `uv-project`: dependencies locked in `uv.lock`, installed with uv without setting
   `installer`, and audited.
 
