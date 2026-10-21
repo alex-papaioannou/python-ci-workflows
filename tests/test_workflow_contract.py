@@ -2611,11 +2611,11 @@ class HarnessIsolationTests(StepHarness, unittest.TestCase):
             self.assertTrue(os.path.isdir(scratch))
 
 
-def locked_versions():
-    """Return the versions requirements-dev.txt pins, by canonical project name."""
+def locked_versions(path=DEV_REQUIREMENTS):
+    """Return the versions a requirements file pins, by canonical project name."""
     pins = re.findall(
         r"^([A-Za-z0-9][A-Za-z0-9._-]*)==([^\s;\\]+)",
-        DEV_REQUIREMENTS.read_text(encoding="utf-8"),
+        path.read_text(encoding="utf-8"),
         re.MULTILINE,
     )
     return {re.sub(r"[-_.]+", "-", name).lower(): version for name, version in pins}
@@ -2661,3 +2661,35 @@ class ParallelSelfTestTests(unittest.TestCase):
         for name, version in installed.items():
             with self.subTest(tool=name):
                 self.assertEqual(locked.get(name), version)
+
+
+class ToolDefaultTests(unittest.TestCase):
+    @unittest.skipUnless(yaml, "needs PyYAML")
+    def test_the_pytest_and_uv_defaults_match_the_development_pins(self):
+        # Dependabot cannot see input defaults, but it updates requirements-dev.in
+        # and its lock, so a new pytest or uv fails here until the default is reviewed.
+        inputs = yaml.safe_load(WORKFLOW.read_text())[True]["workflow_call"]["inputs"]
+        pinned = locked_versions(ROOT / "requirements-dev.in")
+        locked = locked_versions()
+        for name in ("pytest", "uv"):
+            default = inputs[f"{name}-version"]["default"]
+            with self.subTest(tool=name):
+                for path, version in (
+                    ("requirements-dev.in", pinned.get(name)),
+                    ("requirements-dev.txt", locked.get(name)),
+                ):
+                    self.assertEqual(
+                        version,
+                        default,
+                        f"{path} pins {name} {version}, but the {name}-version "
+                        f"default is {default}. CONTRIBUTING says when the default "
+                        "may move: for a security fix, or in the next major version. "
+                        "Otherwise close the update.",
+                    )
+        dependabot = yaml.safe_load((ROOT / ".github/dependabot.yml").read_text())
+        ignored = {
+            rule["dependency-name"]
+            for update in dependabot["updates"]
+            for rule in update.get("ignore", [])
+        }
+        self.assertEqual(ignored & {"pytest", "uv"}, set())

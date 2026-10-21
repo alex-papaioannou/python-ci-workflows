@@ -145,79 +145,80 @@ long a previous major version receives security fixes.
 ## Inputs
 
 All inputs are optional. Paths are relative to `working-directory` and must stay
-inside the checkout. JSON arrays are passed as strings.
+inside the checkout. JSON arrays are passed as strings. "Added in" names the release
+that introduced the input; Unreleased means it is on `main` but not in a release yet.
 
 ### Matrix and job
 
-| Input | Type | Default | Description |
-| --- | --- | --- | --- |
-| `python-versions` | string | `["3.11", "3.12", "3.13", "3.14"]` | JSON array of Python versions. Append `t` for a free-threaded (no-GIL) build, such as `3.14t`. Python 3.11 is the oldest supported version; older entries produce a warning. |
-| `operating-systems` | string | `["ubuntu-latest"]` | JSON array of runners. Each entry is a label, an array of labels such as `["self-hosted", "linux"]`, or a runner-group object such as `{"group": "large"}`. Every step runs through Python, so Windows and macOS need no shell changes. |
-| `matrix-exclude` | string | `[]` | JSON array of cells to skip, each `{"os": ..., "python-version": ...}` with one or both keys, such as `[{"os": "windows-latest", "python-version": "3.12"}]`. Entries match as GitHub matches them: strings ignore case, and an array or object also matches runners it is a prefix or subset of. Validation rejects entries that match nothing and refuses to exclude the primary cell. |
-| `allow-prereleases` | boolean | `false` | Let `setup-python` install alpha, beta and release-candidate versions. |
-| `experimental-python-versions` | string | `[]` | JSON array of matrix versions whose failures do not fail the run. |
-| `max-parallel` | number | `256` | Maximum simultaneous matrix jobs. The default, GitHub's matrix maximum, runs every cell at once; set a lower number to throttle. |
-| `timeout-minutes` | number | `10` | Per-job timeout in minutes. GitHub-hosted runners stop jobs after 360 minutes regardless. |
-| `cancel-in-progress` | boolean | `false` | Cancel older in-flight jobs for the same workflow, ref and call when a new run starts. |
-| `call-name` | string | `""` | Name for this call when one caller workflow calls the workflow more than once with the same `working-directory`. Letters, digits, `.`, `_` and `-`. |
-| `result-runner` | string | `ubuntu-latest` | Runner for the final `result` job, which needs no Python: a label, or one runner in JSON as a single `operating-systems` entry would be: an array of labels it must all have, or a runner-group object. Set it when GitHub-hosted runners are unavailable. |
-| `working-directory` | string | `.` | Project directory inside the checkout, for monorepos. |
+| Input | Type | Default | Added in | Description |
+| --- | --- | --- | --- | --- |
+| `python-versions` | string | `["3.11", "3.12", "3.13", "3.14"]` | 1.0.0 | JSON array of Python versions. Append `t` for a free-threaded (no-GIL) build, such as `3.14t`. Python 3.11 is the oldest supported version; older entries produce a warning. |
+| `operating-systems` | string | `["ubuntu-latest"]` | 1.0.0 | JSON array of runners. Each entry is a label, an array of labels such as `["self-hosted", "linux"]`, or a runner-group object such as `{"group": "large"}`. Every step runs through Python, so Windows and macOS need no shell changes. |
+| `matrix-exclude` | string | `[]` | 1.1.0 | JSON array of cells to skip, each `{"os": ..., "python-version": ...}` with one or both keys, such as `[{"os": "windows-latest", "python-version": "3.12"}]`. Entries match as GitHub matches them: strings ignore case, and an array or object also matches runners it is a prefix or subset of. Validation rejects entries that match nothing and refuses to exclude the primary cell. |
+| `allow-prereleases` | boolean | `false` | 1.0.0 | Let `setup-python` install alpha, beta and release-candidate versions. |
+| `experimental-python-versions` | string | `[]` | 1.0.0 | JSON array of matrix versions whose failures do not fail the run. |
+| `max-parallel` | number | `256` | 1.0.0 | Maximum simultaneous matrix jobs. The default, GitHub's matrix maximum, runs every cell at once; set a lower number to throttle. |
+| `timeout-minutes` | number | `10` | 1.0.0 | Per-job timeout in minutes. GitHub-hosted runners stop jobs after 360 minutes regardless. |
+| `cancel-in-progress` | boolean | `false` | 1.0.0 | Cancel older in-flight jobs for the same workflow, ref and call when a new run starts. |
+| `call-name` | string | `""` | 1.1.0 | Name for this call when one caller workflow calls the workflow more than once with the same `working-directory`. Letters, digits, `.`, `_` and `-`. |
+| `result-runner` | string | `ubuntu-latest` | 1.1.0 | Runner for the final `result` job, which needs no Python: a label, or one runner in JSON as a single `operating-systems` entry would be: an array of labels it must all have, or a runner-group object. Set it when GitHub-hosted runners are unavailable. |
+| `working-directory` | string | `.` | 1.0.0 | Project directory inside the checkout, for monorepos. |
 
 ### Dependencies
 
-| Input | Type | Default | Description |
-| --- | --- | --- | --- |
-| `requirements-file` | string | `""` | Locked dependencies installed before checks. With the pip installer, pip's download cache is saved between runs, keyed on this file, except in a call with `upload-dist`. A requirements `.txt` works with either installer. It may also be a `uv.lock` (exported with `project-extras` and the default groups) or a `pylock.toml` (or `pylock.<name>.toml`), which are always installed with uv. |
-| `install-project` | boolean | `false` | `pip install --editable .` after requirements. With a `requirements-file`, dependencies are assumed locked and installed with `--no-deps`. pip's download cache is keyed on `pyproject.toml` when there is no `requirements-file`, except in a call with `upload-dist`. |
-| `project-extras` | string | `""` | Comma-separated extras installed with the project, such as `test,dev`. |
-| `installer` | string | `pip` | `pip` or `uv`. uv installs into the same interpreter and is much faster on large dependency sets. uv's own cache is not saved between runs. A `uv.lock` or `pylock.toml` `requirements-file` is always installed with uv, the only installer that reads them, so `installer` has no effect with those files, even when set to `pip`. The validation step logs the installer and why it was chosen, and adds that line to the job summary when `requirements-file` or `install-project` is set. |
-| `uv-version` | string | `0.13.4` | uv version used when installing with uv: with `installer: uv`, or a `uv.lock` or `pylock.toml` `requirements-file`. |
-| `require-hashes` | boolean | `true` | Install with `--require-hashes`. Generate files with `pip-compile --generate-hashes` or `uv pip compile --generate-hashes`. |
+| Input | Type | Default | Added in | Description |
+| --- | --- | --- | --- | --- |
+| `requirements-file` | string | `""` | 1.0.0 | Locked dependencies installed before checks. With the pip installer, pip's download cache is saved between runs, keyed on this file, except in a call with `upload-dist`. A requirements `.txt` works with either installer. It may also be a `uv.lock` (exported with `project-extras` and the default groups) or a `pylock.toml` (or `pylock.<name>.toml`), which are always installed with uv. |
+| `install-project` | boolean | `false` | 1.0.0 | `pip install --editable .` after requirements. With a `requirements-file`, dependencies are assumed locked and installed with `--no-deps`. pip's download cache is keyed on `pyproject.toml` when there is no `requirements-file`, except in a call with `upload-dist`. |
+| `project-extras` | string | `""` | 1.0.0 | Comma-separated extras installed with the project, such as `test,dev`. |
+| `installer` | string | `pip` | 1.0.0 | `pip` or `uv`. uv installs into the same interpreter and is much faster on large dependency sets. uv's own cache is not saved between runs. A `uv.lock` or `pylock.toml` `requirements-file` is always installed with uv, the only installer that reads them, so `installer` has no effect with those files, even when set to `pip`. The validation step logs the installer and why it was chosen, and adds that line to the job summary when `requirements-file` or `install-project` is set. |
+| `uv-version` | string | `0.13.4` | 1.0.0 | uv version used when installing with uv: with `installer: uv`, or a `uv.lock` or `pylock.toml` `requirements-file`. |
+| `require-hashes` | boolean | `true` | 1.0.0 | Install with `--require-hashes`. Generate files with `pip-compile --generate-hashes` or `uv pip compile --generate-hashes`. |
 
 ### Dependency audit
 
-| Input | Type | Default | Description |
-| --- | --- | --- | --- |
-| `audit-version` | string | `""` | Scan the installed dependencies with this pip-audit version, once per run on the primary cell, against the PyPI vulnerability database. Editable installs and the interpreter's own pip, setuptools and wheel are skipped unless the requirements file pins them. Findings fail the job and appear in the job summary. Empty disables the audit. |
-| `audit-ignore` | string | `[]` | JSON array of vulnerability IDs to accept, such as `["GHSA-xxxx-xxxx-xxxx"]`. |
+| Input | Type | Default | Added in | Description |
+| --- | --- | --- | --- | --- |
+| `audit-version` | string | `""` | 1.0.0 | Scan the installed dependencies with this pip-audit version, once per run on the primary cell, against the PyPI vulnerability database. Editable installs and the interpreter's own pip, setuptools and wheel are skipped unless the requirements file pins them. Findings fail the job and appear in the job summary. Empty disables the audit. |
+| `audit-ignore` | string | `[]` | 1.0.0 | JSON array of vulnerability IDs to accept, such as `["GHSA-xxxx-xxxx-xxxx"]`. |
 
 ### Tests
 
-| Input | Type | Default | Description |
-| --- | --- | --- | --- |
-| `test-runner` | string | `unittest` | `unittest`, `pytest` or `auto`. `auto` reads the project's files, without importing any of its code, and picks pytest when it finds any of: `pytest.toml`, `.pytest.toml`, `pytest.ini` or `.pytest.ini`; a `[tool.pytest]` or `[tool.pytest.ini_options]` table in `pyproject.toml`; `[pytest]` in `tox.ini`; `[tool:pytest]` in `setup.cfg`; `conftest.py` in `working-directory` or `test-directory`; a requirement named `pytest` in a `.txt` `requirements-file`, `[project.optional-dependencies]` or `[dependency-groups]`; or a non-empty `pytest-args`. Otherwise it picks unittest. The validation step logs the runner; with `auto` it also names the file or setting that decided it and adds that line to the job summary. When unittest discovers no tests but a matching test file defines module-level `test_` functions, the error says to set `test-runner: pytest`; when the project has one of the files or settings above, it says to set `test-runner: pytest` or `auto`. |
-| `pytest-version` | string | `9.1.1` | pytest version installed when the test runner is pytest, set directly or picked by `auto`. |
-| `pytest-args` | string | `""` | Extra pytest arguments, split like a shell command line, for example `-m "not slow" -n auto`; `-n` needs pytest-xdist in your `requirements-file`. Needs the pytest runner; with `test-runner: auto`, setting it picks pytest. |
-| `test-directory` | string | `tests` | Directory to discover tests in. Set it to `""` with the pytest runner to use your pytest `testpaths` instead; unittest treats `""` as `tests`. |
-| `test-pattern` | string | `test*.py` | Filename glob for test modules. With pytest it overrides your `python_files` setting, so the default skips `*_test.py` files; set it to `""` to use your pytest configuration and pytest's defaults (`test_*.py` and `*_test.py`). unittest treats `""` as `test*.py`. Discovering zero tests fails the job. |
-| `top-level-directory` | string | `""` | unittest import root for package-based layouts. Ignored by pytest, which reads `rootdir` from its own configuration. |
-| `test-verbosity` | number | `2` | Output verbosity 0, 1 or 2. For pytest these mean `-q`, the default and `-v`. |
-| `test-fail-fast` | boolean | `false` | Stop after the first failing test. Other matrix jobs still finish. |
-| `doctest-paths` | string | `[]` | JSON array of modules or package directories whose docstring examples also run as tests, through `doctest` with unittest or `--doctest-modules` with pytest. Paths must be inside `working-directory`. unittest imports each file as a module, so it needs every directory and file name on the way to be a valid Python identifier: it rejects a file entry that is not, and skips such files inside a directory with a warning. pytest runs any `.py` file. |
-| `warnings-as-errors` | boolean | `false` | Set `PYTHONWARNINGS=error` for every step. |
-| `hash-seed` | string | `0` | `PYTHONHASHSEED`: `random` or an integer from 0 to 4294967295. |
-| `junit-file` | string | `""` | Write a JUnit XML report here and upload it as `junit-<os>-<python>`, plus the call suffix described under "Calling the workflow more than once". |
+| Input | Type | Default | Added in | Description |
+| --- | --- | --- | --- | --- |
+| `test-runner` | string | `unittest` | 1.0.0 | `unittest`, `pytest` or `auto`. `auto` reads the project's files, without importing any of its code, and picks pytest when it finds any of: `pytest.toml`, `.pytest.toml`, `pytest.ini` or `.pytest.ini`; a `[tool.pytest]` or `[tool.pytest.ini_options]` table in `pyproject.toml`; `[pytest]` in `tox.ini`; `[tool:pytest]` in `setup.cfg`; `conftest.py` in `working-directory` or `test-directory`; a requirement named `pytest` in a `.txt` `requirements-file`, `[project.optional-dependencies]` or `[dependency-groups]`; or a non-empty `pytest-args`. Otherwise it picks unittest. The validation step logs the runner; with `auto` it also names the file or setting that decided it and adds that line to the job summary. When unittest discovers no tests but a matching test file defines module-level `test_` functions, the error says to set `test-runner: pytest`; when the project has one of the files or settings above, it says to set `test-runner: pytest` or `auto`. |
+| `pytest-version` | string | `9.1.1` | 1.0.0 | pytest version installed when the test runner is pytest, set directly or picked by `auto`. |
+| `pytest-args` | string | `""` | 1.0.0 | Extra pytest arguments, split like a shell command line, for example `-m "not slow" -n auto`; `-n` needs pytest-xdist in your `requirements-file`. Needs the pytest runner; with `test-runner: auto`, setting it picks pytest. |
+| `test-directory` | string | `tests` | 1.0.0 | Directory to discover tests in. Set it to `""` with the pytest runner to use your pytest `testpaths` instead; unittest treats `""` as `tests`. |
+| `test-pattern` | string | `test*.py` | 1.0.0 | Filename glob for test modules. With pytest it overrides your `python_files` setting, so the default skips `*_test.py` files; set it to `""` to use your pytest configuration and pytest's defaults (`test_*.py` and `*_test.py`). unittest treats `""` as `test*.py`. Discovering zero tests fails the job. |
+| `top-level-directory` | string | `""` | 1.0.0 | unittest import root for package-based layouts. Ignored by pytest, which reads `rootdir` from its own configuration. |
+| `test-verbosity` | number | `2` | 1.0.0 | Output verbosity 0, 1 or 2. For pytest these mean `-q`, the default and `-v`. |
+| `test-fail-fast` | boolean | `false` | 1.0.0 | Stop after the first failing test. Other matrix jobs still finish. |
+| `doctest-paths` | string | `[]` | 1.0.0 | JSON array of modules or package directories whose docstring examples also run as tests, through `doctest` with unittest or `--doctest-modules` with pytest. Paths must be inside `working-directory`. unittest imports each file as a module, so it needs every directory and file name on the way to be a valid Python identifier: it rejects a file entry that is not, and skips such files inside a directory with a warning. pytest runs any `.py` file. |
+| `warnings-as-errors` | boolean | `false` | 1.0.0 | Set `PYTHONWARNINGS=error` for every step. |
+| `hash-seed` | string | `0` | 1.0.0 | `PYTHONHASHSEED`: `random` or an integer from 0 to 4294967295. |
+| `junit-file` | string | `""` | 1.0.0 | Write a JUnit XML report here and upload it as `junit-<os>-<python>`, plus the call suffix described under "Calling the workflow more than once". |
 
 ### Syntax, lint and type checks
 
-| Input | Type | Default | Description |
-| --- | --- | --- | --- |
-| `compile-paths` | string | `["."]` | JSON array of files or directories to byte-compile. |
-| `compile-exclude` | string | `""` | Python regex of paths to skip while compiling. Match either separator, such as `[/\\]generated[/\\]`. |
-| `ruff-version` | string | `""` | Run `ruff check` at this version, once per run on the primary cell. Empty disables Ruff. |
-| `ruff-format` | boolean | `true` | Also run `ruff format --check` when Ruff is enabled. |
-| `lint-paths` | string | `["."]` | JSON array of paths for Ruff and mypy. |
-| `mypy-version` | string | `""` | Type-check `lint-paths` with this mypy version on every matrix job. Empty disables mypy. |
+| Input | Type | Default | Added in | Description |
+| --- | --- | --- | --- | --- |
+| `compile-paths` | string | `["."]` | 1.0.0 | JSON array of files or directories to byte-compile. |
+| `compile-exclude` | string | `""` | 1.0.0 | Python regex of paths to skip while compiling. Match either separator, such as `[/\\]generated[/\\]`. |
+| `ruff-version` | string | `""` | 1.0.0 | Run `ruff check` at this version, once per run on the primary cell. Empty disables Ruff. |
+| `ruff-format` | boolean | `true` | 1.0.0 | Also run `ruff format --check` when Ruff is enabled. |
+| `lint-paths` | string | `["."]` | 1.0.0 | JSON array of paths for Ruff and mypy. |
+| `mypy-version` | string | `""` | 1.0.0 | Type-check `lint-paths` with this mypy version on every matrix job. Empty disables mypy. |
 
 ### Coverage and packaging
 
-| Input | Type | Default | Description |
-| --- | --- | --- | --- |
-| `coverage-version` | string | `""` | Measure tests with this coverage.py version. The job summary shows the total and a collapsible per-file table with missing lines, and `coverage.xml` is uploaded as `coverage-<os>-<python>`. Code run in subprocesses and pytest-xdist workers is measured too (coverage.py 7.10.3 or later), and the project's own coverage settings such as `omit` and `branch` apply. |
-| `coverage-fail-under` | number | `0` | Fail when total coverage is below this percentage. |
-| `test-wheel` | boolean | `false` | Once per run on the primary cell, as part of the build, install the wheel in a fresh virtual environment and run only a copy of the tests against it. With a `requirements-file` (a `.txt`, `uv.lock` or `pylock.toml`), the locked dependencies are installed first, the same way as for the main tests (same installer, hash-checked unless `require-hashes` is false), then the wheel with `--no-deps`, replacing any copy of the project the lock installed, and the wheel's own requirements must be satisfied by the lock. Without one, the wheel and its `project-extras` resolve normally. pytest is `pytest-version` either way. This catches files missing from the wheel and broken package discovery, but not a packaging problem that shows only on another cell's operating system or Python version. Requires `build-package`. |
-| `build-package` | boolean | `false` | Build an sdist and wheel and run `twine check --strict`, once per run on the primary cell. Requires `pyproject.toml`. Nothing is published. |
-| `upload-dist` | boolean | `false` | After a successful build (and wheel tests, when enabled), upload the files as the `dist` artifact, plus the call suffix, for a publish job in your own workflow. setup-python restores and saves no pip cache in that call, on any matrix cell; see [Publishing to PyPI](#publishing-to-pypi). Requires `build-package`. |
+| Input | Type | Default | Added in | Description |
+| --- | --- | --- | --- | --- |
+| `coverage-version` | string | `""` | 1.0.0 | Measure tests with this coverage.py version. The job summary shows the total and a collapsible per-file table with missing lines, and `coverage.xml` is uploaded as `coverage-<os>-<python>`. Code run in subprocesses and pytest-xdist workers is measured too (coverage.py 7.10.3 or later), and the project's own coverage settings such as `omit` and `branch` apply. |
+| `coverage-fail-under` | number | `0` | 1.0.0 | Fail when total coverage is below this percentage. |
+| `test-wheel` | boolean | `false` | 1.0.0 | Once per run on the primary cell, as part of the build, install the wheel in a fresh virtual environment and run only a copy of the tests against it. With a `requirements-file` (a `.txt`, `uv.lock` or `pylock.toml`), the locked dependencies are installed first, the same way as for the main tests (same installer, hash-checked unless `require-hashes` is false), then the wheel with `--no-deps`, replacing any copy of the project the lock installed, and the wheel's own requirements must be satisfied by the lock. Without one, the wheel and its `project-extras` resolve normally. pytest is `pytest-version` either way. This catches files missing from the wheel and broken package discovery, but not a packaging problem that shows only on another cell's operating system or Python version. Requires `build-package`. |
+| `build-package` | boolean | `false` | 1.0.0 | Build an sdist and wheel and run `twine check --strict`, once per run on the primary cell. Requires `pyproject.toml`. Nothing is published. |
+| `upload-dist` | boolean | `false` | 1.1.0 | After a successful build (and wheel tests, when enabled), upload the files as the `dist` artifact, plus the call suffix, for a publish job in your own workflow. setup-python restores and saves no pip cache in that call, on any matrix cell; see [Publishing to PyPI](#publishing-to-pypi). Requires `build-package`. |
 
 ### Trimming the matrix
 

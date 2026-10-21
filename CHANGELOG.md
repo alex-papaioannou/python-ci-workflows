@@ -61,6 +61,14 @@ major tag such as `v1`, an exact release, or a commit SHA.
   callers and lists the outputs in a table. The test suite pins the `result` job's
   id and name and each artifact name, and checks that the README documents every
   output.
+- An "Added in" column in the README inputs tables, naming the release that
+  introduced each input. `python .github/scripts/inputs_table.py --write` generates
+  it, with the Type and Default columns, from `python-ci.yml` and the Added
+  subsections of CHANGELOG.md. The test suite fails when the README differs, or when
+  a new input has no Added bullet that starts with "`<name>` input".
+  `requirements-dev.in` now pins uv next to pytest, and a test fails when either pin
+  differs from the `uv-version` or `pytest-version` default, so a Dependabot update
+  of either tool fails CI until the default is reviewed.
 
 ### Changed
 

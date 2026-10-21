@@ -12,7 +12,12 @@
 - Pin third-party actions to a full commit SHA with a version comment, and pin tool
   versions explicitly.
 - Every input and output needs a `description` and a row in the README's inputs or
-  outputs table. The test suite checks this.
+  outputs table. A new input's bullet in the Added subsection of `CHANGELOG.md`
+  starts with `` `<name>` input ``, as in
+  `` `call-name` input to tell apart several calls ``.
+  `python .github/scripts/inputs_table.py --write` fills in the row's Type, Default
+  and "Added in" columns from `python-ci.yml` and `CHANGELOG.md`. The test suite
+  checks all of this.
 
 ## Design rules
 
@@ -106,6 +111,14 @@ the versions the build step installs; a test checks they agree. Change them in
 `Audit dependencies` step audits them and their dependencies too, so an advisory
 against any of them fails the smoke test, and blocks releases, until the lock moves.
 
+`requirements-dev.in` also pins pytest and uv at the `pytest-version` and
+`uv-version` defaults, and a test checks that they agree. Dependabot cannot see the
+defaults in `python-ci.yml`, but it updates these pins, so its pull request for a new
+pytest or uv fails until someone reviews the default. Move the default with the pin
+only as the [support policy](README.md#support-policy) allows: under Security when
+the new version fixes a vulnerability in the default, or under Breaking changes for
+the next major version. Otherwise close the pull request.
+
 ## Releases
 
 Releases follow semantic versioning and the README's
@@ -146,6 +159,8 @@ existing caller's run behave differently.
 Releasing is automated. To release, open a pull request that renames
 `## [Unreleased]` to `## [X.Y.Z] - YYYY-MM-DD`, deletes the subsections that stayed
 empty, and adds a fresh `## [Unreleased]` with every subsection heading above it.
+In the same pull request, run `python .github/scripts/inputs_table.py --write`,
+which replaces Unreleased in the README's "Added in" column with the new version.
 The released section becomes the release notes, so the test suite fails on one with
 an empty subsection. The notes list Breaking changes, Changed defaults and Behaviour
 changes first, and end with the release commit's full SHA, a `uses:` line pinned to
