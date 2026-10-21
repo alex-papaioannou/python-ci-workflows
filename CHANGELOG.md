@@ -106,6 +106,15 @@ major tag such as `v1`, an exact release, or a commit SHA.
   shows a hook that installs a package with apt, Homebrew or Chocolatey depending on
   `runner.os`, and this repository's smoke test checks that its own hook ran on
   Linux, Windows and macOS.
+- A release cadence. SECURITY.md promises that a fix listed under Security is
+  released within 7 days of merging. CONTRIBUTING makes four weeks the longest
+  interval between releases while Unreleased has entries, and has a release pull
+  request follow every pull request that adds a Security entry. A weekly
+  `Release cadence` workflow fails when Unreleased has listed a fix under Security
+  for more than 7 days, or has had entries for more than four weeks. The test suite
+  fails when a YAML example in the README or `docs/` passes `python-ci.yml` an
+  input that it does not declare, or one whose "Added in" is Unreleased without
+  saying Unreleased in the paragraph before it.
 
 ### Changed
 

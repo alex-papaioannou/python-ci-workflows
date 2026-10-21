@@ -87,3 +87,24 @@ class ReleaseTriggerTests(unittest.TestCase):
         self.assertRegex(
             text, r"(?m)^  push:\n    branches: \[main\]\n    paths: \[CHANGELOG\.md\]$"
         )
+
+
+@unittest.skipUnless(yaml, "needs PyYAML")
+class ReleaseCadenceTests(unittest.TestCase):
+    def test_a_weekly_read_only_run_checks_the_pending_security_fixes(self):
+        workflow = load("release-cadence.yml")
+        self.assertEqual(set(workflow["on"]), {"schedule", "workflow_dispatch"})
+        (schedule,) = workflow["on"]["schedule"]
+        # One day of every week, at one time.
+        minute, hour, day, month, weekday = schedule["cron"].split()
+        self.assertRegex(f"{minute} {hour} {weekday}", r"^[0-9]+ [0-9]+ [0-6]$")
+        self.assertEqual((day, month), ("*", "*"))
+        self.assertEqual(workflow["permissions"], {"contents": "read"})
+        (job,) = workflow["jobs"].values()
+        self.assertNotIn("permissions", job)
+        checkout, check = job["steps"]
+        self.assertTrue(checkout["uses"].startswith("actions/checkout@"))
+        self.assertIs(checkout["with"]["persist-credentials"], False)
+        # git log -S finds the merge that added an entry only in the whole history.
+        self.assertEqual(checkout["with"]["fetch-depth"], 0)
+        self.assertEqual(check["run"], "python3 .github/scripts/release_cadence.py")

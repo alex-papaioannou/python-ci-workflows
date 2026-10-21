@@ -114,20 +114,21 @@ def fenced_lines(markdown: str) -> list[tuple[str, bool]]:
     return lines
 
 
-def breaking_changes(notes: str) -> list[str]:
-    """Return the entries under a section's Breaking changes subsections.
+def subsection_entries(notes: str, title: str) -> list[list[str]]:
+    """Return the lines of each entry under a section's subsections with this title.
 
-    Each list item or paragraph is one entry, with its continuation lines, nested
-    lists and code blocks joined to it. Deeper headings stay inside the subsection.
+    The title is compared in lower case. Each list item or paragraph is one entry,
+    with its continuation lines, nested lists and code blocks; each line is
+    stripped. Deeper headings stay inside the subsection.
     """
-    entries: list[str] = []
-    level = 0  # Heading level of the Breaking changes subsection we are in, or 0.
+    entries: list[list[str]] = []
+    level = 0  # Heading level of the matching subsection we are in, or 0.
     previous_blank = True
     for line, fenced in fenced_lines(notes):
         heading = None if fenced else ANY_HEADING.fullmatch(line)
         if heading:
             depth = len(line.lstrip(" ")) - len(line.lstrip(" ").lstrip("#"))
-            if heading.group(1).strip().lower() == "breaking changes":
+            if heading.group(1).strip().lower() == title:
                 level = depth
             elif depth <= level:
                 level = 0
@@ -137,11 +138,19 @@ def breaking_changes(notes: str) -> list[str]:
         elif level:
             new_entry = not fenced and (previous_blank or LIST_ITEM.match(line))
             if entries and (line[0].isspace() or not new_entry):
-                entries[-1] += " " + line.strip()
+                entries[-1].append(line.strip())
             else:
-                entries.append(line.strip())
+                entries.append([line.strip()])
             previous_blank = False
     return entries
+
+
+def breaking_changes(notes: str) -> list[str]:
+    """Return the entries under a section's Breaking changes subsections.
+
+    Each entry's lines are joined with spaces.
+    """
+    return [" ".join(lines) for lines in subsection_entries(notes, "breaking changes")]
 
 
 def release_versions(released_tags: list[str]) -> list[tuple[int, ...]]:

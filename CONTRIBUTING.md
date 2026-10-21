@@ -18,6 +18,13 @@
   `python .github/scripts/inputs_table.py --write` fills in the row's Type, Default
   and "Added in" columns from `python-ci.yml` and `CHANGELOG.md`. The test suite
   checks all of this.
+- YAML examples in `README.md` and `docs/*.md` pass `python-ci.yml` only inputs that
+  it declares and that are in a release: a caller's pinned release rejects any
+  other input before a job starts. An example that needs an input whose "Added in"
+  is Unreleased, or an input value or behaviour listed under Unreleased, says
+  Unreleased in the paragraph directly before it. The test suite checks the input
+  names in every `with:` of a call of `python-ci.yml`, and in every `with:`
+  fragment with no `uses:`, in those files.
 
 ## Design rules
 
@@ -161,6 +168,19 @@ links at UPGRADING.md in the released tag, so they also work on the release page
 Changed defaults and Behaviour changes list the other changes that can make an
 existing caller's run behave differently.
 
+The longest interval between releases while `## [Unreleased]` has entries is four
+weeks. A pull request that adds an entry under Security is followed by a release
+pull request, because [SECURITY.md](SECURITY.md) promises that such a fix is
+released within 7 days of merging. The `Release cadence` workflow checks both every
+Monday. A release empties `## [Unreleased]`, so the workflow walks back through the
+commits on `main` that changed `CHANGELOG.md` to the one since which
+`## [Unreleased]` has always had entries, and the one since which its Security
+subsection has. It fails when the first is more than four weeks old or the second
+more than 7 days old. Rewording a pending entry does not restart its clock. A weekly
+check can report a missed deadline up to a week late, so do not wait for it to
+fail. GitHub notifies the user who last changed the workflow's schedule of a failed
+run.
+
 Releasing is automated. To release, open a pull request that renames
 `## [Unreleased]` to `## [X.Y.Z] - YYYY-MM-DD`, deletes the subsections that stayed
 empty, and adds a fresh `## [Unreleased]` with every subsection heading above it.
@@ -184,6 +204,9 @@ through pull requests. The test suite fails while the quick start pins a release
 older than the two newest in `CHANGELOG.md`, so the next release pull request cannot
 merge before this one. It also fails when the pinned SHA is not the commit of the
 release the comment names, which it looks up on GitHub when the tag is not fetched.
+Open it soon after the release: until it merges, an example that passes an input
+the new release added still pins the previous release, which rejects that input,
+and the test suite does not compare an example's inputs with its pin.
 
 From v2 on, the support policy gives the previous major version security fixes for
 six months, as patch releases from a maintenance branch. Before v3.0.0 ships, three

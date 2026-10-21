@@ -1,0 +1,21 @@
+name: Release cadence
+on:
+  # GitHub notifies the user who last changed this schedule when a run fails.
+  schedule:
+    - cron: "17 6 * * 1"
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  overdue-release:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          # The check reads every commit that changed CHANGELOG.md since the last
+          # release.
+          fetch-depth: 0
+      - name: Fail when a release is overdue
+        run: python3 .github/scripts/release_cadence.py
