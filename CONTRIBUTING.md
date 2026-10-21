@@ -25,6 +25,26 @@
   Unreleased in the paragraph directly before it. The test suite checks the input
   names in every `with:` of a call of `python-ci.yml`, and in every `with:`
   fragment with no `uses:`, in those files.
+- Every YAML example in `README.md` and `docs/*.md` with a top-level `jobs:` key, and
+  every example caller (below), passes actionlint and zizmor.
+  `python .github/scripts/lint_snippets.py` lints them as workflow files, and gives
+  an example without an `on:` key a minimal `on:` and `permissions:` header first.
+  An example may accept the findings of one zizmor audit or actionlint rule through
+  `<!-- lint-snippets: accept <name> -->` on the line directly above its opening
+  fence, as the README's `@v1` example does for `unpinned-uses`. zizmor ignore
+  comments in an example do not count.
+- Each example project has a `.github/workflows/ci.yml` that a consumer can copy
+  with it. It calls the release the quick start pins, with the quick start's
+  triggers, permissions and concurrency, and passes the `with:` of its job in
+  `examples.yml` without `working-directory` and without the inputs added after the
+  pinned release, whose "Added in" is Unreleased or a newer version. Where that job
+  relies on a value or behaviour the pinned release does not have, the caller
+  passes a stand-in that the release supports, such as `test-runner: pytest` for
+  `test-runner: auto`, under a comment directly above it that says Unreleased.
+  `STAND_INS` in `tests/test_workflow_contract.py` lists each stand-in with text
+  from the CHANGELOG entry that adds what the job relies on; no other difference
+  passes. The test suite checks all of this, and fails on a stand-in once the
+  caller pins a release whose section has that text.
 
 ## Design rules
 
@@ -102,12 +122,13 @@ mypy tests .github/actions/python-ci .github/scripts
 python -m pip install --require-hashes -r requirements-lint.txt
 actionlint
 zizmor --strict-collection --min-severity medium .
+python .github/scripts/lint_snippets.py
 check-jsonschema --builtin-schema vendor.dependabot .github/dependabot.yml
 ```
 
 zizmor also runs its online audits, which check that every pinned SHA matches its
 version comment, when `GH_TOKEN` holds a GitHub token; without one it runs the
-offline audits only.
+offline audits only. `lint_snippets.py` runs zizmor the same way.
 
 Tests find a workflow step by its `- name:`, read which `steps.py` subcommand it
 runs, and execute that subcommand in a temporary project. Renaming a step means
@@ -196,17 +217,22 @@ pass does it create the `vX.Y.Z` GitHub release from that section and move the m
 tag (`vX`) to the same commit. Releases run only from `main`, in the `release`
 environment.
 
-After each release, open a pull request that updates the pinned SHA in the README:
-replace every `uses:` line pinned to the previous release, `# vX.Y.Z` comment
-included, with the line from the new release's notes. The release commit cannot
-name its own SHA, and `release.yml` does not commit to `main`, which changes only
-through pull requests. The test suite fails while the quick start pins a release
+After each release, open a pull request that updates the pinned SHA in the README
+and the example callers: replace every `uses:` line pinned to the previous release,
+`# vX.Y.Z` comment included, with the line from the new release's notes. In the
+example callers, also pass the inputs the new release added, and replace each
+stand-in that the new release makes unnecessary with its job's setting in
+`examples.yml` and remove its `STAND_INS` entry. The release commit cannot name its
+own SHA, and `release.yml` does not commit to `main`, which changes only through
+pull requests. The test suite fails while the quick start pins a release
 older than the two newest in `CHANGELOG.md`, so the next release pull request cannot
-merge before this one. It also fails when the pinned SHA is not the commit of the
-release the comment names, which it looks up on GitHub when the tag is not fetched.
-Open it soon after the release: until it merges, an example that passes an input
-the new release added still pins the previous release, which rejects that input,
-and the test suite does not compare an example's inputs with its pin.
+merge before this one, and while an example caller pins another release. It also
+fails when the pinned SHA is not the commit of the release the comment names, which
+it looks up on GitHub when the tag is not fetched. Open it soon after the release:
+until it merges, a README example that passes an input the new release added still
+pins the previous release, which rejects that input, and the test suite does not
+compare a README example's inputs with its pin. The example callers leave such
+inputs out, and keep their stand-ins, until their pin moves.
 
 From v2 on, the support policy gives the previous major version security fixes for
 six months, as patch releases from a maintenance branch. Before v3.0.0 ships, three

@@ -1,0 +1,30 @@
+# CI for this project in a repository of its own. In python-ci-workflows the
+# "Example consumers" workflow runs the project instead, because GitHub runs only
+# the workflows in the top-level .github/workflows.
+name: CI
+on:
+  push:
+    branches: [main]
+  pull_request:
+  # Needed only when a merge queue protects the branch.
+  merge_group:
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  # A pull request's runs share a group, so a new push cancels the run it
+  # supersedes. Every other run has a group of its own and always finishes.
+  group: ${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.ref || github.run_id }}
+  cancel-in-progress: true
+jobs:
+  python:
+    uses: alex-papaioannou/python-ci-workflows/.github/workflows/python-ci.yml@49d202ab203e05b7bd8a29376b0fa44188e9bdaa # v1.1.0
+    with:
+      python-versions: '["3.12"]'
+      # Unreleased: examples.yml leaves installer out, because a uv.lock
+      # requirements-file installs with uv. The pinned release needs installer: uv.
+      installer: uv
+      requirements-file: uv.lock
+      audit-version: "2.10.1"
+      # One runner as JSON: labels it must all have, like one operating-systems entry.
+      result-runner: '["ubuntu-latest"]'

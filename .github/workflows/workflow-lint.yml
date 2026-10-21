@@ -28,5 +28,11 @@ jobs:
           # Read-only token for zizmor's online audits, which verify the SHA pins.
           GH_TOKEN: ${{ github.token }}
         run: zizmor --strict-collection --min-severity medium .
+      - name: Lint documentation snippets
+        env:
+          # The same read-only token, for the online audits of the examples' pins.
+          GH_TOKEN: ${{ github.token }}
+        # The YAML examples in README.md and docs/, and the example callers.
+        run: python .github/scripts/lint_snippets.py
       - name: Validate the Dependabot configuration
         run: check-jsonschema --builtin-schema vendor.dependabot .github/dependabot.yml
