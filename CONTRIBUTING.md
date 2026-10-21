@@ -26,7 +26,8 @@ These rules are the workflow's [security posture](README.md#security-posture), a
 even when no caller's run would fail.
 
 - Pin third-party actions in `python-ci.yml` and `action.yml` to a full commit SHA,
-  and load the step scripts only through the same-repository `$/` reference.
+  and load the step scripts only through the same-repository `$/` reference. The
+  only `./` reference is the caller's own pre-test hook.
 - `python-ci.yml` requests `permissions: contents: read` at the top level, and no job
   widens it.
 - Neither `python-ci.yml` nor `action.yml` references `secrets` or `github.token`,
@@ -66,6 +67,10 @@ and rulesets, so changing or removing one is a breaking change; adding one is no
   - `<os>` is the runner label, or for a label array or runner-group object its group
     and labels joined with `-`, with each run of those characters or of whitespace
     replaced by `-`.
+- The pre-test hook: every cell runs `.github/actions/python-ci-pre-test/action.yml`
+  from the caller's repository, when it exists, after `Validate inputs` and before
+  installing dependencies, with the inputs `python-version`, `os`,
+  `working-directory` and `call-name`.
 - The primary-cell rule: Ruff, pip-audit, the package build and the wheel test run
   once per call, on the first entry of `operating-systems` with the first entry of
   `python-versions` that is not in `experimental-python-versions`, or the first entry

@@ -44,11 +44,12 @@ major tag such as `v1`, an exact release, or a commit SHA.
   pinned SHA is the commit of the release its comment names.
 - Release notes end with the release commit's full SHA, a `uses:` line pinned to it
   and a link comparing the release with the previous one.
-- Each matrix cell's job summary ends with a table of its checks: validation,
-  installation, the audit, Ruff, mypy, the syntax check, the build, the test tools
-  and the tests. It gives the outcome of each and the tool versions requested, such
-  as `mypy 2.4.0`. The outcome is success, failure, skipped, or not enabled when its
-  input leaves it off; on the other cells the audit, Ruff and the build read
+- Each matrix cell's job summary ends with a table of its checks: validation, the
+  pre-test hook, installation, the audit, Ruff, mypy, the syntax check, the build,
+  the test tools and the tests. It gives the outcome of each and the tool versions
+  requested, such as `mypy 2.4.0`. The outcome is success, failure, skipped, or not
+  enabled when its input leaves it off or, for the hook, when the repository has
+  none; on the other cells the audit, Ruff and the build read
   "skipped (runs on the primary cell)". The table is written whenever validation
   ran, even after a failure.
 - A public interface section in CONTRIBUTING lists the names callers depend on: the
@@ -90,6 +91,21 @@ major tag such as `v1`, an exact release, or a commit SHA.
   case. Each variable is written to `GITHUB_ENV` with a random delimiter, so a value
   with newlines stays one variable. Values appear in the job logs, so the input is
   for values that are not secret. The default, `{}`, sets nothing.
+- A pre-test hook: when the calling repository has
+  `.github/actions/python-ci-pre-test/action.yml`, every matrix cell runs that
+  action after `Validate inputs` and before installing dependencies, with the inputs
+  `python-version`, `os` (the cell's runner as JSON), `working-directory` and
+  `call-name`. A calling job cannot add steps to a reusable workflow, so this is
+  where a project installs a system package or starts a service its tests need; the
+  action can set variables and `PATH` entries for the later steps through
+  `GITHUB_ENV` and `GITHUB_PATH`. A failed hook skips the install, the checks and
+  the tests, and the job summary's table has a row for it. The hook adds no input
+  and runs no input text, and it runs with the same trust as the project's tests.
+  Unlike the tests, it can restore an Actions cache, so SECURITY.md says to restore
+  none in a call with `upload-dist`. The README's new "Adding setup steps" section
+  shows a hook that installs a package with apt, Homebrew or Chocolatey depending on
+  `runner.os`, and this repository's smoke test checks that its own hook ran on
+  Linux, Windows and macOS.
 
 ### Changed
 
@@ -138,11 +154,12 @@ major tag such as `v1`, an exact release, or a commit SHA.
 
 - The tests now run after lint, type, compile and build failures, that is when Ruff,
   mypy, the syntax check or the package build fails, and after a failed dependency
-  audit. They depend only on validation and on installing the dependencies and test
-  tools. One mypy or syntax error used to skip the tests on every matrix cell, and a
-  Ruff or build failure skipped them on the primary cell. The job still fails, and
-  `dist` is still uploaded only when every earlier step succeeded. The syntax check
-  and the build still need every earlier step to succeed.
+  audit. They depend only on validation, on the pre-test hook when there is one,
+  and on installing the dependencies and test tools. One mypy or syntax error used
+  to skip the tests on every matrix cell, and a Ruff or build failure skipped them
+  on the primary cell. The job still fails, and `dist` is still uploaded only when
+  every earlier step succeeded. The syntax check and the build still need every
+  earlier step to succeed.
 
 ## [1.1.0] - 2026-10-21
 

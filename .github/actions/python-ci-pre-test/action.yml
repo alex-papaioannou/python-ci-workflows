@@ -1,0 +1,24 @@
+name: Pre-test hook
+description: >-
+  This repository's own pre-test hook. python-ci.yml runs the hook at this path in
+  the checkout of whichever repository calls it, so callers write their own; this
+  one only lets the smoke test check that the hook ran on every cell.
+inputs:
+  python-version:
+    description: The matrix cell's python-versions entry, such as 3.14t
+  os:
+    description: The matrix cell's operating-systems entry, as JSON
+  working-directory:
+    description: The call's working-directory input
+  call-name:
+    description: The call's call-name input, empty by default
+runs:
+  using: composite
+  steps:
+    - name: Record the Python version for the tests
+      shell: bash
+      env:
+        PYTHON_VERSION: ${{ inputs.python-version }}
+      # zizmor flags every GITHUB_ENV write in an action; this value is a
+      # python-versions entry from this repository's own workflows.
+      run: echo "PYTHON_CI_PRE_TEST_PYTHON=$PYTHON_VERSION" >> "$GITHUB_ENV" # zizmor: ignore[github-env]

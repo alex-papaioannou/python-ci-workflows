@@ -47,3 +47,13 @@ its latest release, for six months. The README's
   access further.
 - pip-audit runs from its own temporary environment and audits the installed
   packages without importing them.
+- The pre-test hook, `.github/actions/python-ci-pre-test/action.yml` in your
+  repository, runs with the same trust as your test code: it comes from the same
+  checkout, so a pull request runs its own version of the hook, as it runs its own
+  tests. Unlike test code, an action can read `github.token`, which in this
+  workflow has only `contents: read`, and through actions such as `actions/cache`
+  it can restore and save Actions caches and upload artifacts. Every call runs the
+  hook, so in a call with `upload-dist` a hook that restores a cache undoes the
+  protection above: restore none in that call. A `cache-mode` on the calling job
+  limits the hook's cache access too. The hook runs only after the inputs are
+  validated, and no input adds a step or is run as code.
