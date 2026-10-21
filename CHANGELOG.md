@@ -127,6 +127,20 @@ major tag such as `v1`, an exact release, or a commit SHA.
   these callers, and every YAML example with a `jobs:` key in the README and
   `docs/`, with actionlint and zizmor. An example accepts the findings of one audit
   only through a marker comment directly above it.
+- `docs/recipes.md`, linked from the README: complete caller workflows for
+  publishing to PyPI from the `dist` artifact in a release workflow of its own;
+  uploading the `coverage-*` artifacts to Codecov with OIDC; branch protection and
+  merge queues, with the `python / result` check, the `merge_group` trigger, a
+  smaller matrix on pull requests and alls-green to combine the call with other
+  jobs; monorepos; a matrix of dependency sets; hashed requirements exported from
+  Poetry, PDM and pip-tools, with the tool versions each command was verified
+  with; pre-commit hooks with prek; and pytest-timeout and pytest-rerunfailures,
+  with a warning that reruns hide flaky tests. The publishing recipe explains the
+  call suffix of the `dist` artifact's name and how a release build avoids a
+  restored cache. The recipes pin the quick start's release and use its triggers and
+  concurrency. The test suite checks both, checks the artifact names they download
+  against the workflow's own, and fails while a recipe keeps an Unreleased note
+  about a change that the pinned release has.
 
 ### Changed
 

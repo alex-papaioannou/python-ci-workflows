@@ -4,7 +4,10 @@ A reusable GitHub Actions workflow for Python projects. By default it checks syn
 discovers and runs `unittest` or pytest tests, rejects empty test suites, and runs on Python
 3.11 through 3.14. It needs no secrets; see [Security posture](#security-posture).
 Dependency installation, linting, type checking, coverage and package builds are all
-optional.
+optional. [docs/recipes.md](docs/recipes.md) has complete caller workflows for
+publishing to PyPI, Codecov, branch protection and merge queues, monorepos,
+dependency-set matrices, hashed requirements from Poetry, PDM and pip-tools,
+pre-commit hooks, and pytest timeouts and reruns.
 
 ## Quick start
 
@@ -338,6 +341,11 @@ jobs, so run a call with `upload-dist` on GitHub-hosted or ephemeral runners. A
 `cache-mode` you set on the calling job limits that call's cache access; the workflow
 declares none of its own, so it never asks for more and always starts.
 
+The download step above names the artifact of a single call from the repository
+root. A call with a `call-name` or another `working-directory` uploads `dist` plus
+its call suffix; [Publishing to PyPI](docs/recipes.md#publishing-to-pypi) shows that
+name and a release workflow of its own, which leaves your CI calls their pip cache.
+
 ### Calling the workflow more than once
 
 A monorepo can call the workflow once per project from a single caller workflow.
@@ -364,6 +372,8 @@ single call with the default `working-directory: .` keeps the plain names.
 
 To cancel whole caller runs instead, set `concurrency:` on the caller workflow
 itself, as the [quick start](#quick-start) does.
+[Monorepos](docs/recipes.md#monorepos) has a complete workflow, with a second call
+for one of the projects.
 
 ### Adding setup steps
 
@@ -445,7 +455,10 @@ JSON numbers (`3.10` as a number becomes `3.1`).
 
 A final `result` job waits for the whole matrix and fails unless it succeeded. It runs no Python and checks nothing out, so `result-runner` can point it at any runner. In
 branch protection, require the single `<caller job> / result` check instead of
-listing every matrix job. The workflow's outputs:
+listing every matrix job.
+[Branch protection and merge queues](docs/recipes.md#branch-protection-and-merge-queues)
+shows the `merge_group` trigger a merge queue needs, a smaller matrix on pull
+requests, and how to combine the check with your own jobs. The workflow's outputs:
 
 | Output | Description |
 | --- | --- |

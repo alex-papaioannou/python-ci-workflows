@@ -2,6 +2,7 @@
 
 import argparse
 import contextlib
+import fnmatch
 import importlib.util
 import io
 import json
@@ -169,6 +170,22 @@ class StepHarness:
             return self.run_step(
                 root, step, env, executable, cwd=root / working_directory
             )
+
+    def validate_outputs(self, env):
+        """Run Validate inputs; return its outputs and what it printed."""
+        with tempfile.TemporaryDirectory() as out:
+            output = Path(out) / "output"
+            result = self.execute(
+                {"tests/test_ok.py": ""},
+                {**env, "GITHUB_OUTPUT": str(output)},
+                step="Validate inputs",
+            )
+            self.assertEqual(result.returncode, 0, result.stderr)
+            values = dict(
+                line.split("=", 1)
+                for line in output.read_text(encoding="utf-8").splitlines()
+            )
+            return values, result.stdout
 
 
 class WorkflowTests(StepHarness, unittest.TestCase):
@@ -482,21 +499,6 @@ class WorkflowTests(StepHarness, unittest.TestCase):
             if step.get("uses", "").startswith("actions/upload-artifact")
         ]
         self.assertCountEqual(names, [artifact_template(n) for n in ARTIFACT_NAMES])
-
-    def validate_outputs(self, env):
-        with tempfile.TemporaryDirectory() as out:
-            output = Path(out) / "output"
-            result = self.execute(
-                {"tests/test_ok.py": ""},
-                {**env, "GITHUB_OUTPUT": str(output)},
-                step="Validate inputs",
-            )
-            self.assertEqual(result.returncode, 0, result.stderr)
-            values = dict(
-                line.split("=", 1)
-                for line in output.read_text(encoding="utf-8").splitlines()
-            )
-            return values, result.stdout
 
     def test_primary_cell_skips_experimental_versions(self):
         matrix = {
@@ -3741,3 +3743,352 @@ class ExampleCallerTests(unittest.TestCase):
             with self.subTest(caller=path.relative_to(ROOT).as_posix()):
                 for key in ("on", "permissions", "concurrency"):
                     self.assertEqual(caller[key], quick_start[key], key)
+
+
+RECIPES = ROOT / "docs/recipes.md"
+RECIPE_TITLES = (
+    "Publishing to PyPI",
+    "Uploading coverage to Codecov",
+    "Branch protection and merge queues",
+    "Monorepos",
+    "Testing against several dependency sets",
+    "Hashed requirements from Poetry, PDM and pip-tools",
+    "Pre-commit hooks",
+    "pytest timeouts and reruns",
+)
+# The change that a recipe's Unreleased note describes, by text from its CHANGELOG.md
+# entry. A note lapses once the recipes pin a release whose section has that text, so
+# the pull request that moves the pin drops it.
+UNRELEASED_NOTES = {
+    "Publishing to PyPI": (
+        "A call with `upload-dist` no longer has setup-python restore or save a pip "
+        "cache"
+    ),
+    "Hashed requirements from Poetry, PDM and pip-tools": (
+        "A `uv.lock` or `pylock.toml` `requirements-file` now installs with uv"
+    ),
+}
+
+
+def heading_anchor(heading):
+    """Return the anchor GitHub gives a Markdown heading."""
+    return re.sub(r"[^\w\- ]", "", heading.strip().lower()).replace(" ", "-")
+
+
+def recipe_sections():
+    """Return {title: body} for each level-two section of docs/recipes.md."""
+    parts = re.split(r"(?m)^## (.+)\n", RECIPES.read_text(encoding="utf-8"))
+    return dict(zip(parts[1::2], parts[2::2]))
+
+
+def recipe_workflows(body):
+    """Return the complete workflows of a recipe, parsed, with on: as "on"."""
+    return [
+        load_workflow(text)
+        for _, _, text in yaml_blocks(body)
+        if text and re.search(r"(?m)^jobs:", text)
+    ]
+
+
+def shell_commands(body):
+    """Return the commands of a recipe's sh code blocks, each split into words."""
+    return [
+        shlex.split(line)
+        for block in re.findall(r"(?ms)^```sh\n(.*?)^```", body)
+        for line in block.splitlines()
+        if line.strip()
+    ]
+
+
+def written_file(command):
+    """Return the file a command writes with -o, --output or --output-file."""
+    for flag in ("-o", "--output", "--output-file"):
+        if flag in command:
+            return command[command.index(flag) + 1]
+    return None
+
+
+def calls(workflow):
+    """Return {job id: job} for the jobs of a workflow that call python-ci.yml."""
+    return {
+        name: job
+        for name, job in workflow["jobs"].items()
+        if CALLED_WORKFLOW.search(job.get("uses", ""))
+    }
+
+
+def steps_using(job, action):
+    """Return the steps of a job that use the action, at any ref."""
+    return [
+        step
+        for step in job.get("steps", [])
+        if step.get("uses", "").startswith(action + "@")
+    ]
+
+
+@unittest.skipUnless(yaml, "needs PyYAML")
+class RecipeTests(StepHarness, unittest.TestCase):
+    """docs/recipes.md: caller workflows that people copy whole."""
+
+    def recipe(self, title):
+        """Return the body of a recipe and its one complete workflow."""
+        body = recipe_sections()[title]
+        (workflow,) = recipe_workflows(body)
+        return body, workflow
+
+    def suffix(self, call):
+        """Return the call suffix that Validate inputs gives a call's with: block."""
+        inputs = call.get("with", {})
+        values, _ = self.validate_outputs(
+            {
+                "WORKING_DIRECTORY": inputs.get("working-directory", "."),
+                "CALL_NAME": inputs.get("call-name", ""),
+            }
+        )
+        return values["artifact-suffix"]
+
+    def relies_on_unreleased(self, title):
+        """Whether the release the recipes pin lacks the change a note describes."""
+        changelog = (ROOT / "CHANGELOG.md").read_text(encoding="utf-8")
+        section = first_section_with(changelog, UNRELEASED_NOTES[title])
+        self.assertIsNotNone(section, UNRELEASED_NOTES[title])
+        # ReadmePinTests checks that every recipe pins the quick start's release.
+        (pinned,) = set(CALLER_PIN.findall(RECIPES.read_text(encoding="utf-8")))
+        return newer_than(section, pinned)
+
+    def test_the_readme_links_the_recipes_and_every_link_resolves(self):
+        self.assertEqual(tuple(recipe_sections()), RECIPE_TITLES)
+        recipes = RECIPES.read_text(encoding="utf-8")
+        anchors = {
+            heading_anchor(heading)
+            for heading in re.findall(r"(?m)^#{1,6} (.+)$", recipes)
+        }
+        # Links to the rest of the repository name files that exist, and headings
+        # in them.
+        for target, anchor in re.findall(r"\]\((\.\./[^)#\s]+)#?([^)\s]*)\)", recipes):
+            path = RECIPES.parent / target
+            with self.subTest(link=target, anchor=anchor):
+                self.assertTrue(path.exists())
+                if anchor:
+                    headings = re.findall(
+                        r"(?m)^#{1,6} (.+)$", path.read_text(encoding="utf-8")
+                    )
+                    self.assertIn(anchor, set(map(heading_anchor, headings)))
+        readme = (ROOT / "README.md").read_text(encoding="utf-8")
+        self.assertIn("](docs/recipes.md)", readme)
+        from_readme = re.findall(r"\]\(docs/recipes\.md#([^)]+)\)", readme)
+        within = re.findall(r"\]\(#([^)]+)\)", recipes)
+        # The README's sections on publishing, monorepos and required checks link
+        # their recipes, and the list at the top of the page links every recipe.
+        self.assertEqual(
+            set(from_readme),
+            {"publishing-to-pypi", "monorepos", "branch-protection-and-merge-queues"},
+        )
+        listed = {heading_anchor(title) for title in RECIPE_TITLES}
+        self.assertLessEqual(listed, set(within))
+        for link in from_readme + within:
+            with self.subTest(link=link):
+                self.assertIn(link, anchors)
+
+    def test_each_recipe_is_a_complete_workflow_that_calls_the_workflow(self):
+        quick_start = load_workflow(quick_start_workflows()[0])
+        ci_recipes = 0
+        for title, body in recipe_sections().items():
+            workflows = recipe_workflows(body)
+            with self.subTest(recipe=title):
+                self.assertEqual(len(workflows), 1)
+                (workflow,) = workflows
+                self.assertTrue(workflow["on"])
+                self.assertEqual(workflow["permissions"], quick_start["permissions"])
+                self.assertTrue(calls(workflow))
+                # The page says that the CI recipes trigger and cancel like the
+                # quick start.
+                if "pull_request" in workflow["on"]:
+                    ci_recipes += 1
+                    for key in ("on", "concurrency"):
+                        self.assertEqual(workflow[key], quick_start[key], key)
+                for job in workflow["jobs"].values():
+                    for step in job.get("steps", []):
+                        if "uses" in step:
+                            # Pinned to a full commit SHA, as zizmor requires.
+                            self.assertRegex(step["uses"], r"@[0-9a-f]{40}$")
+                    for step in steps_using(job, "actions/checkout"):
+                        self.assertIs(step["with"]["persist-credentials"], False)
+        # Every recipe but the release workflow.
+        self.assertEqual(ci_recipes, len(RECIPE_TITLES) - 1)
+
+    def test_the_publishing_recipe_downloads_the_dist_artifact_of_its_call(self):
+        body, workflow = self.recipe("Publishing to PyPI")
+        self.assertEqual(set(workflow["on"]), {"push"})
+        self.assertEqual(set(workflow["on"]["push"]), {"tags"})
+        ((name, call),) = calls(workflow).items()
+        self.assertIs(call["with"]["upload-dist"], True)
+        if self.relies_on_unreleased("Publishing to PyPI"):
+            # Until then, a call with upload-dist restores pip's cache whenever
+            # either of these is set.
+            self.assertNotIn("requirements-file", call["with"])
+            self.assertNotIn("install-project", call["with"])
+        (publish,) = [job for job in workflow["jobs"].values() if job.get("needs")]
+        self.assertEqual(publish["needs"], name)
+        self.assertEqual(publish["permissions"], {"id-token": "write"})
+        (download,) = steps_using(publish, "actions/download-artifact")
+        self.assertEqual(download["with"]["name"], "dist" + self.suffix(call))
+        # The examples of the call suffix in the text are the names the workflow
+        # gives those calls.
+        words = " ".join(body.split())
+        examples = re.findall(r"`([a-z-]+): ([^`]+)` uploads `dist([^`]*)`", words)
+        self.assertEqual(
+            {key for key, _, _ in examples}, {"working-directory", "call-name"}
+        )
+        for key, value, suffix in examples:
+            with self.subTest(**{key: value}):
+                self.assertEqual(self.suffix({"with": {key: value}}), suffix)
+
+    def test_an_unreleased_note_lasts_until_the_pinned_release_has_its_change(self):
+        for title, body in recipe_sections().items():
+            with self.subTest(recipe=title):
+                self.assertEqual(
+                    "Unreleased" in body,
+                    title in UNRELEASED_NOTES and self.relies_on_unreleased(title),
+                )
+
+    def test_the_codecov_recipe_downloads_each_report_into_its_own_directory(self):
+        _, workflow = self.recipe("Uploading coverage to Codecov")
+        ((name, call),) = calls(workflow).items()
+        self.assertTrue(call["with"]["coverage-version"])
+        (job,) = [job for job in workflow["jobs"].values() if job.get("needs")]
+        self.assertEqual(job["needs"], name)
+        self.assertEqual(job["permissions"], {"contents": "read", "id-token": "write"})
+        (download,) = steps_using(job, "actions/download-artifact")
+        pattern = download["with"]["pattern"]
+        suffix = self.suffix(call)
+        for artifact in ARTIFACT_NAMES:
+            cell = artifact.replace("<os>-<python>", "ubuntu-latest-3.13") + suffix
+            with self.subTest(artifact=cell):
+                matches = fnmatch.fnmatchcase(cell, pattern)
+                self.assertEqual(matches, artifact.startswith("coverage-"))
+        # Every report is a coverage.xml, so merging the artifacts would keep one.
+        self.assertIs(download["with"]["merge-multiple"], False)
+        (upload,) = steps_using(job, "codecov/codecov-action")
+        self.assertIs(upload["with"]["use_oidc"], True)
+        self.assertEqual(upload["with"]["directory"], download["with"]["path"])
+
+    def test_the_branch_protection_recipe_requires_one_check(self):
+        body, workflow = self.recipe("Branch protection and merge queues")
+        self.assertIn("`python / result`", body)
+        self.assertIn("merge_group", workflow["on"])
+        ((name, call),) = calls(workflow).items()
+        self.assertEqual(name, "python")
+        # Pull requests test a subset of the versions every other run tests.
+        expression = call["with"]["python-versions"]
+        self.assertTrue(
+            expression.startswith("${{ github.event_name == 'pull_request' && '")
+        )
+        pull_request, other = map(json.loads, re.findall(r"'(\[[^']*\])'", expression))
+        self.assertLess(set(pull_request), set(other))
+        self.assertEqual(pull_request, [other[0], other[-1]])
+        ((gate_name, gate),) = [
+            (job_name, job)
+            for job_name, job in workflow["jobs"].items()
+            if steps_using(job, "re-actors/alls-green")
+        ]
+        self.assertIn(f"`{gate_name}`", body)
+        self.assertEqual(gate["if"], "always()")
+        needs = set(gate["needs"])
+        self.assertEqual(needs, set(workflow["jobs"]) - {gate_name})
+        self.assertIn(name, needs)
+        (step,) = steps_using(gate, "re-actors/alls-green")
+        self.assertEqual(step["with"]["jobs"], "${{ toJSON(needs) }}")
+        # Exactly the jobs that an if: can skip may be skipped.
+        allowed = {job.strip() for job in step["with"]["allowed-skips"].split(",")}
+        conditional = {job for job in needs if "if" in workflow["jobs"][job]}
+        self.assertEqual(allowed, conditional)
+        self.assertTrue(conditional)
+
+    def test_the_monorepo_recipe_names_each_call_apart(self):
+        body, workflow = self.recipe("Monorepos")
+        jobs = calls(workflow)
+        suffixes = {name: self.suffix(call) for name, call in jobs.items()}
+        self.assertEqual(len(set(suffixes.values())), len(jobs))
+        words = " ".join(body.split())
+        for name in jobs:
+            with self.subTest(job=name):
+                self.assertIn(f"`{name} / result`", words)
+        examples = re.findall(r"`(junit-[^`]+)` from `([^`]+)`", words)
+        self.assertTrue(examples)
+        for artifact, name in examples:
+            with self.subTest(artifact=artifact):
+                self.assertTrue(jobs[name]["with"]["junit-file"])
+                self.assertEqual(artifact, "junit-ubuntu-latest-3.13" + suffixes[name])
+
+    def test_the_dependency_set_recipe_gives_each_entry_its_own_call(self):
+        body, workflow = self.recipe("Testing against several dependency sets")
+        ((_, call),) = calls(workflow).items()
+        self.assertIs(call["strategy"]["fail-fast"], False)
+        entries = call["strategy"]["matrix"]["include"]
+        key = re.fullmatch(r"\$\{\{ matrix\.([\w-]+) \}\}", call["with"]["call-name"])
+        self.assertIsNotNone(key)
+        names = [entry[key.group(1)] for entry in entries]
+        self.assertEqual(len(set(names)), len(entries))
+        files = re.fullmatch(
+            r"\$\{\{ matrix\.([\w-]+) \}\}", call["with"]["requirements-file"]
+        )
+        lock_files = {entry[files.group(1)] for entry in entries}
+        self.assertEqual(len(lock_files), len(entries))
+        # uv writes each entry's file, with hashes and for every platform.
+        commands = shell_commands(body)
+        self.assertEqual({written_file(command) for command in commands}, lock_files)
+        for command in commands:
+            self.assertEqual(command[:3], ["uv", "pip", "compile"])
+            self.assertLessEqual({"--universal", "--generate-hashes"}, set(command))
+        words = " ".join(body.split())
+        for entry in names:
+            check = call["name"].replace(f"${{{{ matrix.{key.group(1)} }}}}", entry)
+            with self.subTest(check=check):
+                self.assertIn(f"`{check} / result`", words)
+                self.assertEqual(
+                    self.suffix({"with": {"call-name": entry}}), f"-{entry}"
+                )
+
+    def test_each_lock_export_names_the_tool_versions_it_was_verified_with(self):
+        body, workflow = self.recipe(
+            "Hashed requirements from Poetry, PDM and pip-tools"
+        )
+        ((_, call),) = calls(workflow).items()
+        target = call["with"]["requirements-file"]
+        # Each tool's name and plugins, and the options its export needs for hashes:
+        # Poetry and PDM add them by default, and pip-compile only when asked.
+        tools = {
+            "Poetry": (("Poetry", "poetry-plugin-export"), set()),
+            "PDM": (("PDM",), set()),
+            "pip-tools": (("pip-tools",), {"--generate-hashes"}),
+        }
+        parts = re.split(r"(?m)^### (.+)\n", body)
+        subsections = dict(zip(parts[1::2], parts[2::2]))
+        self.assertEqual(set(subsections), set(tools))
+        for title, (names, options) in tools.items():
+            text = " ".join(subsections[title].split())
+            with self.subTest(tool=title):
+                for tool in names:
+                    self.assertRegex(text, rf"{re.escape(tool)} \d+\.\d+\.\d+")
+                self.assertIn("Verified with", text)
+                (export,) = filter(written_file, shell_commands(subsections[title]))
+                # The command writes the file the workflow installs, with hashes.
+                self.assertEqual(written_file(export), target)
+                self.assertLessEqual(options, set(export))
+                self.assertFalse({"--without-hashes", "--no-hashes"} & set(export))
+
+    def test_the_pytest_recipe_warns_that_reruns_hide_flaky_tests(self):
+        body, workflow = self.recipe("pytest timeouts and reruns")
+        ((_, call),) = calls(workflow).items()
+        self.assertEqual(call["with"]["test-runner"], "pytest")
+        args = shlex.split(call["with"]["pytest-args"])
+        self.assertTrue(any(arg.startswith("--timeout=") for arg in args), args)
+        self.assertTrue(any(arg.startswith("--reruns=") for arg in args), args)
+        (requirements,) = re.findall(r"(?ms)^```text\n(.*?)^```", body)
+        pins = dict(line.split("==") for line in requirements.split())
+        self.assertLessEqual({"pytest-timeout", "pytest-rerunfailures"}, set(pins))
+        (command,) = shell_commands(body)
+        self.assertEqual(written_file(command), call["with"]["requirements-file"])
+        self.assertLessEqual({"--universal", "--generate-hashes"}, set(command))
+        self.assertIn("Reruns hide flaky tests.", " ".join(body.split()))
