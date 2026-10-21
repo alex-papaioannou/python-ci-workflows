@@ -127,11 +127,11 @@ on:
         type: string
         default: ""
       test-runner:
-        description: "Test runner: unittest or pytest"
+        description: "Test runner: unittest, pytest, or auto to choose from the project's files"
         type: string
         default: "unittest"
       pytest-version:
-        description: "pytest version installed when test-runner is pytest"
+        description: "pytest version installed when the test runner is pytest"
         type: string
         default: "9.1.1"
       pytest-args:
@@ -292,7 +292,7 @@ jobs:
           REQUIRE_HASHES: ${{ inputs.require-hashes }}
           INSTALLER: ${{ inputs.installer }}
           PROJECT_EXTRAS: ${{ inputs.project-extras }}
-          TEST_RUNNER: ${{ inputs.test-runner }}
+          TEST_RUNNER: ${{ steps.validate.outputs.test-runner }}
           PYTEST_VERSION: ${{ inputs.pytest-version }}
           TEST_DIRECTORY: ${{ inputs.test-directory }}
           TEST_PATTERN: ${{ inputs.test-pattern }}
@@ -305,10 +305,10 @@ jobs:
           path: ${{ runner.temp }}/python-ci-dist
           if-no-files-found: error
       - name: Install test tools
-        if: inputs.coverage-version != '' || inputs.test-runner == 'pytest'
+        if: inputs.coverage-version != '' || steps.validate.outputs.test-runner == 'pytest'
         env:
           COVERAGE_VERSION: ${{ inputs.coverage-version }}
-          TEST_RUNNER: ${{ inputs.test-runner }}
+          TEST_RUNNER: ${{ steps.validate.outputs.test-runner }}
           PYTEST_VERSION: ${{ inputs.pytest-version }}
         run: python "$PYTHON_CI_STEPS" install-test-tools
       - name: Run tests and reject empty test suites
@@ -321,9 +321,10 @@ jobs:
           COVERAGE_VERSION: ${{ inputs.coverage-version }}
           COVERAGE_FAIL_UNDER: ${{ inputs.coverage-fail-under }}
           JUNIT_FILE: ${{ inputs.junit-file }}
-          TEST_RUNNER: ${{ inputs.test-runner }}
+          TEST_RUNNER: ${{ steps.validate.outputs.test-runner }}
           PYTEST_ARGS: ${{ inputs.pytest-args }}
           DOCTEST_PATHS: ${{ inputs.doctest-paths }}
+          REQUIREMENTS_FILE: ${{ inputs.requirements-file }}
         run: python "$PYTHON_CI_STEPS" test
       - name: Upload JUnit report
         if: always() && inputs.junit-file != ''

@@ -25,6 +25,17 @@ major tag such as `v1`, an exact release, or a commit SHA.
   weakening one is a breaking change. Both documents also state that
   `alex-papaioannou/python-ci-workflows` is the permanent path and will not be
   renamed or transferred.
+- `test-runner: auto`, which picks pytest when the project has a pytest
+  configuration file or table, a `conftest.py`, a `pytest` requirement in a `.txt`
+  `requirements-file`, `[project.optional-dependencies]` or `[dependency-groups]`,
+  or a non-empty `pytest-args`, and unittest otherwise. It reads files only and
+  imports nothing. The validation step logs the chosen runner and the file or
+  setting that decided it, and adds them to the job summary. With an explicit
+  runner it logs only the runner. The default stays `unittest`.
+- When unittest discovers no tests but a matching test file defines module-level
+  `test_` functions, or the project has pytest configuration, the error now says to
+  set `test-runner: pytest`. It also suggests `auto` when the project has one of the
+  files or settings that make `auto` pick pytest.
 
 ### Changed
 

@@ -319,17 +319,116 @@ def check_version(variable: str, label: str, example: str) -> None:
         raise SystemExit(f"{label} must be empty or a version such as {example}")
 
 
+PYTEST_CONFIG_FILES = ("pytest.toml", ".pytest.toml", "pytest.ini", ".pytest.ini")
+
+
+def requirement_name(requirement: str) -> str:
+    """Return the canonical name a requirement string or requirements line starts with."""
+    match = re.match(r"\s*([A-Za-z0-9][A-Za-z0-9._-]*)", requirement)
+    return canonical(match.group(1)) if match else ""
+
+
+def pytest_signal() -> str | None:
+    """Return the file or setting that marks the project as using pytest, if any.
+
+    Only files are read; no project code is imported. A pyproject.toml that is not
+    valid TOML raises ValueError.
+    """
+    import tomllib
+
+    for name in PYTEST_CONFIG_FILES:
+        if os.path.isfile(name):
+            return f"found {name}"
+    pyproject: dict = {}
+    if os.path.isfile("pyproject.toml"):
+        with open("pyproject.toml", "rb") as file:
+            pyproject = tomllib.load(file)
+    tool = pyproject.get("tool")
+    if isinstance(tool, dict) and isinstance(tool.get("pytest"), dict):
+        options = ".ini_options" if "ini_options" in tool["pytest"] else ""
+        return f"found [tool.pytest{options}] in pyproject.toml"
+    # pytest ignores a comment after a section header, as in "[pytest]  # options".
+    for name, section in (("tox.ini", "pytest"), ("setup.cfg", "tool:pytest")):
+        if os.path.isfile(name) and re.search(
+            rf"^\[{re.escape(section)}\][ \t]*(?:[#;].*)?$",
+            Path(name).read_text(encoding="utf-8", errors="replace"),
+            re.MULTILINE,
+        ):
+            return f"found [{section}] in {name}"
+    for directory in (".", env("TEST_DIRECTORY") or "tests"):
+        conftest = Path(directory, "conftest.py")
+        if conftest.is_file():
+            return f"found {conftest.as_posix()}"
+    requirements = env("REQUIREMENTS_FILE")
+    if Path(requirements).suffix == ".txt" and os.path.isfile(requirements):
+        # pip skips a byte order mark, which Windows editors may write.
+        text = Path(requirements).read_text(encoding="utf-8-sig", errors="replace")
+        if any(requirement_name(line) == "pytest" for line in text.splitlines()):
+            return f"found pytest in {requirements}"
+    project = pyproject.get("project")
+    project = project if isinstance(project, dict) else {}
+    for table, groups in (
+        ("project.optional-dependencies", project.get("optional-dependencies")),
+        ("dependency-groups", pyproject.get("dependency-groups")),
+    ):
+        if not isinstance(groups, dict):
+            continue
+        for group, entries in groups.items():
+            # Dependency groups may also hold {include-group = "..."} tables.
+            if isinstance(entries, list) and any(
+                isinstance(entry, str) and requirement_name(entry) == "pytest"
+                for entry in entries
+            ):
+                return f"found pytest in [{table}] {group}"
+    # Any value counts, as it does for the pytest-args check in validate.
+    if env("PYTEST_ARGS"):
+        return "pytest-args is set"
+    return None
+
+
+def resolve_test_runner() -> str:
+    """Return the test runner, choosing one for test-runner: auto, and report it.
+
+    The log always names the runner. Only a choice made by auto also goes to the job
+    summary, so callers that name a runner get no new summary line.
+    """
+    runner = env("TEST_RUNNER", "unittest")
+    if runner not in ("unittest", "pytest", "auto"):
+        raise SystemExit("test-runner must be unittest, pytest or auto")
+    if runner != "auto":
+        print(f"Test runner: {runner} (from the test-runner input)")
+        return runner
+    try:
+        signal = pytest_signal()
+    except ValueError as error:
+        raise SystemExit(
+            f"test-runner: auto could not read pyproject.toml: {error}"
+        ) from None
+    runner = "pytest" if signal else "unittest"
+    reason = signal or (
+        "found no pytest configuration, conftest.py, pytest requirement or pytest-args"
+    )
+    line = f"Test runner: {runner} (auto: {reason})"
+    print(line)
+    if env("GITHUB_STEP_SUMMARY"):
+        with open(env("GITHUB_STEP_SUMMARY"), "a", encoding="utf-8") as summary:
+            summary.write(line + "\n\n")
+    return runner
+
+
 def validate() -> int:
     check_directory("TEST_DIRECTORY", "test-directory")
     check_directory("TOP_LEVEL_DIRECTORY", "top-level-directory")
     requirements = env("REQUIREMENTS_FILE")
     if requirements and not inside(requirements).is_file():
         raise SystemExit("requirements-file must name an existing file")
+    # Later steps read the resolved runner from this step's test-runner output.
+    runner = resolve_test_runner()
     validate_path_list("COMPILE_PATHS", "compile-paths", "Compilation target")
     validate_path_list("LINT_PATHS", "lint-paths", "Lint target")
     if env("DOCTEST_PATHS", "[]") != "[]":
         validate_path_list("DOCTEST_PATHS", "doctest-paths", "Doctest target")
-        validate_doctest_paths()
+        validate_doctest_paths(runner)
     check_version("RUFF_VERSION", "ruff-version", "0.6.9")
     check_version("MYPY_VERSION", "mypy-version", "1.11.2")
     check_version("COVERAGE_VERSION", "coverage-version", "7.6.1")
@@ -390,17 +489,15 @@ def validate() -> int:
         raise SystemExit("test-verbosity must be 0, 1, or 2")
     if not re.fullmatch(r"[A-Za-z0-9._-]*", env("CALL_NAME")):
         raise SystemExit("call-name may contain only letters, digits, '.', '_' and '-'")
-    if env("TEST_RUNNER", "unittest") not in ("unittest", "pytest"):
-        raise SystemExit("test-runner must be unittest or pytest")
     if not VERSION.fullmatch(env("PYTEST_VERSION")) or (
-        env("TEST_RUNNER") == "pytest" and not env("PYTEST_VERSION")
+        runner == "pytest" and not env("PYTEST_VERSION")
     ):
         raise SystemExit("pytest-version must be a version such as 9.1.1")
     try:
         shlex.split(env("PYTEST_ARGS"))
     except ValueError as error:
         raise SystemExit(f"pytest-args could not be parsed: {error}") from None
-    if env("TEST_RUNNER", "unittest") != "pytest" and env("PYTEST_ARGS"):
+    if runner != "pytest" and env("PYTEST_ARGS"):
         raise SystemExit("pytest-args requires test-runner: pytest")
     if env("TEST_FAIL_FAST", "false").lower() not in ("true", "false"):
         raise SystemExit("test-fail-fast must be boolean")
@@ -409,7 +506,9 @@ def validate() -> int:
         raise SystemExit("test-pattern must be a filename glob, not a path")
     re.compile(env("COMPILE_EXCLUDE"))
     warn_about_inputs_without_effect()
-    write_outputs({"artifact-suffix": artifact_suffix(), **matrix_cell()})
+    write_outputs(
+        {"artifact-suffix": artifact_suffix(), "test-runner": runner, **matrix_cell()}
+    )
     return 0
 
 
@@ -952,14 +1051,14 @@ def doctest_modules(paths: list[str]) -> list[tuple[Path, str]]:
     ]
 
 
-def validate_doctest_paths() -> None:
+def validate_doctest_paths(runner: str) -> None:
     """Reject doctest paths that would crash or be skipped instead of running.
 
     pytest runs any .py file. unittest imports modules by name, so with unittest an
     explicit file must have a module name, and files without one inside a directory
     (for example under .github or a hyphenated directory) are skipped with a warning.
     """
-    unittest_runner = env("TEST_RUNNER", "unittest") != "pytest"
+    unittest_runner = runner != "pytest"
     for path in json.loads(env("DOCTEST_PATHS", "[]")):
         target = Path(path)
         if not target.resolve().is_relative_to(Path.cwd().resolve()):
@@ -1031,6 +1130,63 @@ def no_tests_message(directory: str, pattern: str) -> str:
     )
 
 
+def pytest_functions(directory: str, pattern: str) -> str | None:
+    """Name a test module that defines a module-level test_ function, if any.
+
+    unittest collects only TestCase classes, so such functions are pytest tests. The
+    files are parsed, never imported. Hidden directories and virtual environments are
+    skipped.
+    """
+    import ast
+    import fnmatch
+    import warnings
+
+    for root, directories, files in os.walk(directory):
+        directories[:] = sorted(
+            name
+            for name in directories
+            if not name.startswith(".")
+            and name != "__pycache__"
+            and not os.path.isfile(os.path.join(root, name, "pyvenv.cfg"))
+        )
+        for name in sorted(files):
+            if not (name.endswith(".py") and fnmatch.fnmatch(name, pattern)):
+                continue
+            path = os.path.join(root, name)
+            try:
+                # Warnings such as invalid escape sequences must not stop the parse
+                # when warnings are errors.
+                with warnings.catch_warnings():
+                    warnings.simplefilter("ignore")
+                    tree = ast.parse(Path(path).read_bytes(), path)
+            except (OSError, SyntaxError, ValueError):
+                continue
+            for node in tree.body:
+                if isinstance(
+                    node, (ast.FunctionDef, ast.AsyncFunctionDef)
+                ) and node.name.startswith("test_"):
+                    shown = Path(os.path.normpath(path)).as_posix()
+                    return f"{shown} defines {node.name}()"
+    return None
+
+
+def pytest_hint(directory: str, pattern: str) -> str:
+    """Point an empty unittest run whose tests look like pytest tests at pytest.
+
+    test-runner: auto is offered only when it would pick pytest; test_ functions alone
+    are not one of its signals.
+    """
+    try:
+        signal = pytest_signal()
+    except ValueError:  # a pyproject.toml that is not valid TOML proves nothing
+        signal = None
+    evidence = pytest_functions(directory, pattern) or signal
+    if evidence is None:
+        return ""
+    auto = " (or auto)" if signal else ""
+    return f" These look like pytest tests ({evidence}); set test-runner: pytest{auto}."
+
+
 def run_unittest() -> int:
     # unittest has no project configuration, so empty inputs mean its conventions.
     directory = env("TEST_DIRECTORY") or "tests"
@@ -1040,7 +1196,9 @@ def run_unittest() -> int:
     )
     suite.addTest(doctest_suite())
     if suite.countTestCases() == 0:
-        raise SystemExit(no_tests_message(directory, pattern))
+        raise SystemExit(
+            no_tests_message(directory, pattern) + pytest_hint(directory, pattern)
+        )
     runner = unittest.TextTestRunner(
         verbosity=int(env("TEST_VERBOSITY", "2")),
         failfast=flag("TEST_FAIL_FAST"),

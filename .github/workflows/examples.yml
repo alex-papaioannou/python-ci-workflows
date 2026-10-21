@@ -25,7 +25,8 @@ jobs:
       working-directory: examples/src-package
       python-versions: '["3.11", "3.14"]'
       operating-systems: '["ubuntu-latest", "windows-latest"]'
-      test-runner: pytest
+      # Picks pytest because [project.optional-dependencies] test lists it.
+      test-runner: auto
       install-project: true
       project-extras: test
       build-package: true
