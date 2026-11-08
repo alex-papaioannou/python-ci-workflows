@@ -1,7 +1,7 @@
 # The pytest-version and uv-version defaults in python-ci.yml. A test checks they
 # agree, so an update of either fails until the default is reviewed.
 pytest==9.1.1
-uv==0.13.4
+uv==0.13.6
 
 pytest-xdist==3.8.0
 pyyaml==6.0.3
